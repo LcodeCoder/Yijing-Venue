@@ -17,3 +17,5 @@ battle.png
 Thumbs.db
 backend/data/
 .impeccable/
+
+.env.production

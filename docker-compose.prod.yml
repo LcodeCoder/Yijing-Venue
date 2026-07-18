@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/data:/app/data
+    networks:
+      - yijing-venue
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "10000:80"
+    networks:
+      - yijing-venue
+
+networks:
+  yijing-venue:
+    driver: bridge
