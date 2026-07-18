@@ -1,5 +1,6 @@
-﻿import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { coverGameCurtain, gameCurtain, resetGameCurtain, revealGameCurtain } from '../services/gameTransition'
 import HomeView from '../views/HomeView.vue'
 import BattleView from '../views/BattleView.vue'
 import CollectionView from '../views/CollectionView.vue'
@@ -19,10 +20,19 @@ const routes = [
   { path: '/login', component: LoginView }, { path: '/register', component: RegisterView },
   { path: '/admin', component: AdminView, meta: { requiresAdmin: true } }
 ]
-const router = createRouter({ history: createWebHistory(), routes, scrollBehavior: () => ({ top: 0 }) })
-router.beforeEach(async to => {
+const router = createRouter({
+  history: createWebHistory(),
+  routes,
+  scrollBehavior: (to, from, savedPosition) => savedPosition || ({ top: 0, behavior: 'smooth' })
+})
+router.beforeEach(async (to, from) => {
+  if (to.name === 'battle' && to.fullPath !== from.fullPath && !gameCurtain.active) await coverGameCurtain('正在进入对局')
   const auth = useAuthStore()
   if (auth.token && !auth.user) { try { await auth.fetchMe() } catch { auth.logout() } }
   if (to.meta.requiresAdmin && !auth.isAdmin) return '/login'
 })
+router.afterEach(to => {
+  if (to.name === 'battle' && gameCurtain.active) window.setTimeout(revealGameCurtain, 90)
+})
+router.onError(() => resetGameCurtain())
 export default router

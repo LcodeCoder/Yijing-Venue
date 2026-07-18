@@ -21,6 +21,7 @@ public class MatchController {
     public GameState create(@RequestBody(required = false) CreateMatchRequest request,
                             @RequestHeader(value = "Authorization", required = false) String authorization) {
         UserAccount user = auth.optional(authorization);
+        auth.ensureMatchAllowed(user);
         String mode = request == null || request.mode() == null ? "AI" : request.mode();
         String name = request == null ? null : request.playerName();
         int boardSize = request == null || request.boardSize() == null ? 3 : request.boardSize();
@@ -34,9 +35,23 @@ public class MatchController {
     public GameState join(@PathVariable String id, @RequestBody(required = false) JoinMatchRequest request,
                           @RequestHeader(value = "Authorization", required = false) String authorization) {
         UserAccount user = auth.optional(authorization);
+        auth.ensureMatchAllowed(user);
         String name = request == null ? null : request.playerName();
         if (user != null && (name == null || name.isBlank())) name = user.getDisplayName();
         return games.join(id, name, user == null ? null : user.getId());
+    }
+
+    @GetMapping("/cooldown")
+    public Map<String, Object> cooldown(@RequestHeader(value = "Authorization", required = false) String authorization) {
+        UserAccount user = auth.optional(authorization);
+        return Map.of("remainingSeconds", user == null ? 0 : auth.matchBanRemaining(user.getId()));
+    }
+
+    @PostMapping("/{id}/leave")
+    public GameState leave(@PathVariable String id, @Valid @RequestBody PlayerActionRequest request,
+                           @RequestHeader(value = "Authorization", required = false) String authorization) {
+        UserAccount user = auth.optional(authorization);
+        return games.leave(id, request.playerId(), user == null ? null : user.getId());
     }
 
     @GetMapping("/{id}") public GameState get(@PathVariable String id) { return games.get(id); }

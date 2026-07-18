@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class GameService {
-    static final int PHASE_DURATION_SECONDS = 15;
+    static final int PHASE_DURATION_SECONDS = 30;
     private final CardCatalogService catalog;
     private final SimpMessagingTemplate messaging;
     private final Map<String, GameState> matches = new ConcurrentHashMap<>();
@@ -70,7 +70,7 @@ public class GameService {
         } else {
             player.setEnergy(3);
             startPhase(game, GamePhase.DEPLOY);
-            game.setStatusText("先部署至少一张场地；部署阶段限时15秒，超时自动推进");
+            game.setStatusText("先部署至少一张场地；部署阶段限时30秒，超时自动推进");
             log(game, "初始部署开始 · " + player.getName() + " 获得3点灵力");
         }
         return game;
@@ -93,7 +93,7 @@ public class GameService {
         host.setEnergy(3);
         startPhase(game, GamePhase.DEPLOY);
         game.setStatusText("双方已就位，部署阶段开始");
-        log(game, opponent.getName() + " 加入对局 · 双方各有15秒部署时间");
+        log(game, opponent.getName() + " 加入对局 · 双方各有30秒部署时间");
         publish(game);
         return game;
     }
@@ -273,6 +273,30 @@ public class GameService {
         game.setStatusText("「" + unit.getName() + "」已撤离，空出1个驻场位置");
         log(game, player.getName() + " 从" + site.getName() + "撤离「" + unit.getName() + "」");
         game.setUpdatedAt(Instant.now());
+        publish(game);
+        return game;
+    }
+
+    public synchronized GameState leave(String matchId, String playerId, String accountId) {
+        GameState game = matches.get(matchId);
+        if (game == null) throw new IllegalArgumentException("对局不存在");
+        PlayerState leaver = playerById(game, playerId);
+        if (leaver.getAccountId() != null && !Objects.equals(leaver.getAccountId(), accountId)) {
+            throw new IllegalArgumentException("无权代替其他玩家退出对局");
+        }
+        if (game.getPhase() == GamePhase.FINISHED) return game;
+        if (game.isWaitingForOpponent()) {
+            game.setWaitingForOpponent(false);
+            finish(game, "DRAW", "房间关闭");
+            game.setStatusText(leaver.getName() + " 已关闭房间");
+            publish(game);
+            return game;
+        }
+        PlayerState winner = game.getPlayers().stream().filter(player -> !player.getId().equals(leaver.getId())).findFirst().orElseThrow();
+        finish(game, winner.getId(), "对手退出");
+        game.setStatusText(leaver.getName() + " 退出了对局，" + winner.getName() + " 获得胜利");
+        log(game, leaver.getName() + " 确认退出·将进入 30 秒匹配冷却");
+        if (auth != null && leaver.getAccountId() != null) auth.applyMatchBan(leaver.getAccountId(), 30);
         publish(game);
         return game;
     }
@@ -709,8 +733,14 @@ public class GameService {
             PlayerState winner = playerById(game, winnerId);
             PlayerState loser = game.getPlayers().stream().filter(p -> !p.getId().equals(winnerId)).findFirst().orElse(null);
             if (loser != null && winner.getAccountId() != null && loser.getAccountId() != null) {
-                auth.recordRankedResult(winner.getAccountId(), loser.getAccountId());
-                game.setRankedResultRecorded(true);
+                AuthService.RankedResult result = auth.recordRankedResult(winner.getAccountId(), loser.getAccountId());
+                if (result != null) {
+                    game.getRatingChanges().put(winner.getId(), result.winnerDelta());
+                    game.getRatingChanges().put(loser.getId(), result.loserDelta());
+                    game.getRatingsAfter().put(winner.getId(), result.winnerRating());
+                    game.getRatingsAfter().put(loser.getId(), result.loserRating());
+                    game.setRankedResultRecorded(true);
+                }
             }
         }
     }

@@ -137,7 +137,6 @@ async function submit() {
         {{ busy ? '正在验证…' : (mode === 'email' ? '验证并登录' : '登录') }}
       </button>
       <router-link to="/register">还没有账号？立即注册</router-link>
-      <em>演示管理员：admin / admin123</em>
     </form>
   </div>
 </template>

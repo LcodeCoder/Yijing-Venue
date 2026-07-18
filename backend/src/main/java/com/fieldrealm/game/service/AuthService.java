@@ -21,6 +21,7 @@ public class AuthService {
     private final Map<String, String> idByUsername = new HashMap<>();
     private final Map<String, String> idByEmail = new HashMap<>();
     private final Map<String, String> sessions = new ConcurrentHashMap<>();
+    private final Map<String, Instant> matchBans = new ConcurrentHashMap<>();
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final Path storage = Paths.get("data", "users.json");
     private final SecureRandom random = new SecureRandom();
@@ -100,15 +101,49 @@ public class AuthService {
         return publicView(user);
     }
 
-    public synchronized void recordRankedResult(String winnerAccountId, String loserAccountId) {
+    public synchronized RankedResult recordRankedResult(String winnerAccountId, String loserAccountId) {
         UserAccount winner = usersById.get(winnerAccountId), loser = usersById.get(loserAccountId);
-        if (winner == null || loser == null || winner == loser) return;
+        if (winner == null || loser == null || winner == loser) return null;
         double expectedWinner = 1d / (1d + Math.pow(10d, (loser.getRating() - winner.getRating()) / 400d));
-        int delta = Math.max(8, (int) Math.round(28 * (1 - expectedWinner)));
-        winner.setRating(winner.getRating() + delta); winner.setWins(winner.getWins() + 1); winner.setGames(winner.getGames() + 1);
-        loser.setRating(Math.max(0, loser.getRating() - delta)); loser.setGames(loser.getGames() + 1);
+        int requestedDelta = Math.max(8, (int) Math.round(28 * (1 - expectedWinner)));
+        int winnerBefore = winner.getRating(), loserBefore = loser.getRating();
+        winner.setRating(winnerBefore + requestedDelta); winner.setWins(winner.getWins() + 1); winner.setGames(winner.getGames() + 1);
+        loser.setRating(Math.max(0, loserBefore - requestedDelta)); loser.setGames(loser.getGames() + 1);
         save();
+        return new RankedResult(
+                winner.getRating() - winnerBefore,
+                winner.getRating(),
+                loser.getRating() - loserBefore,
+                loser.getRating()
+        );
     }
+
+    public void ensureMatchAllowed(UserAccount user) {
+        if (user == null) return;
+        int remaining = matchBanRemaining(user.getId());
+        if (remaining > 0) throw new IllegalArgumentException("退出惩罚中，还需等待 " + remaining + " 秒才能开始新对局");
+    }
+
+    public int applyMatchBan(String userId, int seconds) {
+        if (userId == null || userId.isBlank()) return 0;
+        Instant next = Instant.now().plusSeconds(Math.max(1, seconds));
+        matchBans.merge(userId, next, (current, proposed) -> current.isAfter(proposed) ? current : proposed);
+        return matchBanRemaining(userId);
+    }
+
+    public int matchBanRemaining(String userId) {
+        if (userId == null || userId.isBlank()) return 0;
+        Instant until = matchBans.get(userId);
+        if (until == null) return 0;
+        long millis = java.time.Duration.between(Instant.now(), until).toMillis();
+        if (millis <= 0) {
+            matchBans.remove(userId, until);
+            return 0;
+        }
+        return (int) Math.ceil(millis / 1000d);
+    }
+
+    public record RankedResult(int winnerDelta, int winnerRating, int loserDelta, int loserRating) { }
 
     public synchronized List<Map<String, Object>> rankings() {
         List<UserAccount> sorted = usersById.values().stream().sorted(Comparator.comparingInt(UserAccount::getRating).reversed()).toList();

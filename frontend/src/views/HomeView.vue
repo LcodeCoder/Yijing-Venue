@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Swords, Sparkles, ShieldCheck, Timer, Map, ChevronRight, Play, Users, Bot, Trophy } from 'lucide-vue-next'
 import { api } from '../services/api'
@@ -12,10 +12,14 @@ const error = ref('')
 const boardSize = ref(3)
 const roomId = ref('')
 const waiting = ref(false)
+const cooldownRemaining = ref(0)
 const boardMotion = reactive({ tiltX: '0deg', tiltY: '0deg', glowX: '50%', glowY: '46%' })
 let poller
+let cooldownTimer
 
 async function start(mode = 'AI') {
+  if (typeof mode !== 'string') mode = 'AI'
+  if (cooldownRemaining.value > 0) return showCooldownError()
   creating.value = true
   error.value = ''
   try {
@@ -30,6 +34,7 @@ async function start(mode = 'AI') {
 }
 
 async function joinRoom() {
+  if (cooldownRemaining.value > 0) return showCooldownError()
   if (!roomId.value.trim()) return
   creating.value = true
   try {
@@ -44,6 +49,7 @@ async function joinRoom() {
 }
 
 async function ranked() {
+  if (cooldownRemaining.value > 0) return showCooldownError()
   if (!auth.isLoggedIn) {
     router.push('/login')
     return
@@ -79,6 +85,30 @@ async function cancel() {
   await api.cancelQueue()
 }
 
+function refreshCooldown() {
+  const until = Number(localStorage.getItem('fieldrealm-match-ban-until') || 0)
+  cooldownRemaining.value = Math.max(0, Math.ceil((until - Date.now()) / 1000))
+  if (!cooldownRemaining.value && until) localStorage.removeItem('fieldrealm-match-ban-until')
+}
+
+function showCooldownError() {
+  error.value = `退出惩罚中，还需等待 ${cooldownRemaining.value} 秒才能开始新对局`
+}
+
+onMounted(async () => {
+  refreshCooldown()
+  cooldownTimer = window.setInterval(refreshCooldown, 500)
+  if (auth.isLoggedIn) {
+    try {
+      const state = await api.matchCooldown()
+      if (state.remainingSeconds > cooldownRemaining.value) {
+        localStorage.setItem('fieldrealm-match-ban-until', String(Date.now() + state.remainingSeconds * 1000))
+        refreshCooldown()
+      }
+    } catch {}
+  }
+})
+
 function moveBoard(event) {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
   const rect = event.currentTarget.getBoundingClientRect()
@@ -97,7 +127,7 @@ function resetBoard() {
   boardMotion.glowY = '46%'
 }
 
-onBeforeUnmount(() => clearInterval(poller))
+onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
 </script>
 
 <template>
@@ -109,9 +139,10 @@ onBeforeUnmount(() => clearInterval(poller))
         <h1>胜负不在伤害，<br /><em>而在场地的归属。</em></h1>
         <p>部署场地、驻扎单位、发动争夺。没有血量与消灭，只有不断改写的局势，以及你对五域主动权的掌控。</p>
         <div class="hero-actions">
-          <button class="primary-button" :disabled="creating" @click="start"><Play :size="18" fill="currentColor" />{{ creating ? '正在开启弈境…' : '开始人机对弈' }}</button>
+          <button class="primary-button" :disabled="creating || cooldownRemaining > 0" @click="start('AI')"><Play :size="18" fill="currentColor" />{{ creating ? '正在开启弈境…' : '开始人机对弈' }}</button>
           <router-link to="/rules" class="secondary-button"><Map :size="18" />查看完整规则</router-link>
         </div>
+        <p v-if="cooldownRemaining" class="cooldown-notice"><Timer :size="16"/>退出惩罚中 · {{ cooldownRemaining }} 秒后可开始新对局</p>
         <p v-if="error" class="inline-error">{{ error }}</p>
         <div class="hero-stats">
           <span><b>5</b><small>固定场地</small></span><span><b>3</b><small>每回合灵力</small></span><span><b>8</b><small>完整回合</small></span><span><b>2</b><small>胜利路线</small></span>
@@ -145,12 +176,12 @@ onBeforeUnmount(() => clearInterval(poller))
     </section>
 
     <section class="section-wrap mode-section">
-      <div class="section-heading"><span>选择你的道路</span><h2>3×3、4×4、5×5 三种弈境</h2><p>所有部署与争夺阶段均限时 15 秒，超时自动推进。</p></div>
+      <div class="section-heading"><span>选择你的道路</span><h2>3×3、4×4、5×5 三种弈境</h2><p>所有部署与争夺阶段均限时 30 秒，超时自动推进。</p></div>
       <div class="board-size-picker"><button v-for="n in [3, 4, 5]" :key="n" :class="{ active: boardSize === n }" @click="boardSize = n">{{ n }}×{{ n }}<small>{{ n === 3 ? '快速' : n === 4 ? '标准' : '史诗' }}</small></button></div>
       <div class="mode-grid expanded">
-        <article class="mode-card featured"><div class="mode-icon"><Bot /></div><span class="mode-tag">单人训练</span><h3>秘境试炼</h3><p>与雾隐执棋者对战，熟悉计时部署、场地连线与卡牌组合。</p><button @click="start('AI')">立即挑战 <ChevronRight /></button></article>
-        <article class="mode-card room-mode"><div class="mode-icon"><Users /></div><span class="mode-tag">实时联机</span><h3>好友房间</h3><p>创建房间后把 8 位房间号发给朋友，双方通过 WebSocket 实时同步。</p><div class="room-actions"><button class="create-room-button" @click="start('PVP')">创建房间</button><div class="room-join"><input v-model="roomId" maxlength="8" placeholder="输入房间号" /><button @click="joinRoom">加入</button></div></div></article>
-        <article class="mode-card ranked"><div class="mode-icon"><Trophy /></div><span class="mode-tag">赛季排位</span><h3>天梯匹配</h3><p>按棋盘尺寸匹配真人对手，胜负会写入真实积分与排行榜。</p><button v-if="!waiting" @click="ranked">开始匹配</button><button v-else @click="cancel">匹配中… 点击取消</button></article>
+        <article class="mode-card featured"><div class="mode-icon"><Bot /></div><span class="mode-tag">单人训练</span><h3>秘境试炼</h3><p>与雾隐执棋者对战，熟悉计时部署、场地连线与卡牌组合。</p><button :disabled="creating || cooldownRemaining > 0" @click="start('AI')">立即挑战 <ChevronRight /></button></article>
+        <article class="mode-card room-mode"><div class="mode-icon"><Users /></div><span class="mode-tag">实时联机</span><h3>好友房间</h3><p>创建房间后把 8 位房间号发给朋友，双方通过 WebSocket 实时同步。</p><div class="room-actions"><button class="create-room-button" :disabled="creating || cooldownRemaining > 0" @click="start('PVP')">创建房间</button><div class="room-join"><input v-model="roomId" maxlength="8" placeholder="输入房间号" /><button :disabled="creating || cooldownRemaining > 0" @click="joinRoom">加入</button></div></div></article>
+        <article class="mode-card ranked"><div class="mode-icon"><Trophy /></div><span class="mode-tag">赛季排位</span><h3>天梯匹配</h3><p>按棋盘尺寸匹配真人对手，胜负会写入真实积分与排行榜。</p><button v-if="!waiting" :disabled="creating || cooldownRemaining > 0" @click="ranked">开始匹配</button><button v-else @click="cancel">匹配中… 点击取消</button></article>
       </div>
       <p v-if="error" class="inline-error">{{ error }}</p>
     </section>

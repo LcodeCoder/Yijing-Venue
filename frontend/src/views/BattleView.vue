@@ -1,6 +1,6 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { Client } from '@stomp/stompjs'
 import SockJS from 'sockjs-client'
 import { ArrowLeft, BookOpen, CheckCircle2, ChevronRight, Clock3, Dices, Hand, History, LoaderCircle, LocateFixed, LogOut, Minus, Move, Plus, RotateCcw, Sparkles, Swords, Volume2, VolumeX, X, Zap, Trash2 } from 'lucide-vue-next'
@@ -38,6 +38,11 @@ const boardZoom = ref(1)
 const boardPanX = ref(0)
 const boardPanY = ref(0)
 const boardPanning = ref(false)
+const boardSettling = ref(false)
+const showExitConfirm = ref(false)
+const pendingExitTarget = ref('/')
+const allowRouteLeave = ref(false)
+const exiting = ref(false)
 const BOARD_WIDTH = 1320
 const BOARD_HEIGHT = 820
 const activeBoardPointers = new Map()
@@ -45,6 +50,9 @@ let boardDragStart = null
 let boardPinchStart = null
 let blockBoardClick = false
 let boardClickGuardTimer
+let boardSettleTimer
+let boardDragFeedback = false
+let audioContext
 let boardResizeObserver
 let initiativeRollTimer
 let initiativeRevealTimer
@@ -108,6 +116,22 @@ const secondsRemaining = computed(() => {
 })
 const phaseClockLabel = computed(() => game.value?.phase === 'FINISHED' ? '' : `${secondsRemaining.value}s`)
 const phaseClockUrgent = computed(() => secondsRemaining.value > 0 && secondsRemaining.value <= 5)
+const activeMatch = computed(() => Boolean(game.value && !game.value.waitingForOpponent && game.value.phase !== 'FINISHED'))
+const ratingDelta = computed(() => game.value?.ratingChanges?.[localPlayerId.value] ?? 0)
+const ratingAfter = computed(() => game.value?.ratingsAfter?.[localPlayerId.value])
+const ratingDirection = computed(() => ratingDelta.value >= 0 ? '获得' : '减少')
+
+watch(secondsRemaining, (next, previous) => {
+  if (next > 0 && next <= 5 && next !== previous) tone('tick')
+})
+
+onBeforeRouteLeave(to => {
+  if (!activeMatch.value || allowRouteLeave.value) return true
+  pendingExitTarget.value = to.fullPath
+  showExitConfirm.value = true
+  tone('warning')
+  return false
+})
 const actionSteps = computed(() => {
   if (game.value?.phase === 'CONTEST') return [
     { label: '选中单位', done: Boolean(selectedUnit.value) },
@@ -137,6 +161,7 @@ onMounted(async () => {
     connect()
     if (game.value.initialContestResolved && game.value.turnNumber === 1 && game.value.playerRoll > 0) showInitiativeFx()
     window.addEventListener('keydown', shortcuts)
+    window.addEventListener('beforeunload', warnBeforeUnload)
     countdownTimer = window.setInterval(() => { clock.value = Date.now() }, 250)
   } catch (e) {
     error.value = e.message
@@ -150,6 +175,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   client?.deactivate()
   window.removeEventListener('keydown', shortcuts)
+  window.removeEventListener('beforeunload', warnBeforeUnload)
   clearInterval(countdownTimer)
   clearTimeout(pulseTimer)
   clearTimeout(revealTimer)
@@ -161,8 +187,10 @@ onBeforeUnmount(() => {
   clearInterval(initiativeRollTimer)
   clearTimeout(initiativeRevealTimer)
   clearTimeout(boardClickGuardTimer)
+  clearTimeout(boardSettleTimer)
   boardResizeObserver?.disconnect()
   activeBoardPointers.clear()
+  audioContext?.close?.().catch?.(() => {})
 })
 
 function connect() {
@@ -189,6 +217,9 @@ function syncGame(next) {
       return old && JSON.stringify(old) !== JSON.stringify(site)
     })
     if (changedSite) flashSite(changedSite.index)
+    if (previous.phase !== 'FINISHED' && next.phase === 'FINISHED') {
+      tone(next.winnerId === localPlayerId.value ? 'victory' : 'defeat')
+    }
   }
   const initiativeResolved = Boolean(previous && !previous.initialContestResolved && next?.initialContestResolved && next.playerRoll > 0)
   game.value = next
@@ -348,9 +379,11 @@ function startBoardPan(event) {
   const point = pointerPosition(event)
   activeBoardPointers.set(event.pointerId, point)
   clearTimeout(boardClickGuardTimer)
+  clearTimeout(boardSettleTimer)
   if (activeBoardPointers.size === 1) {
     boardDragStart = { ...point, panX: boardPanX.value, panY: boardPanY.value }
     boardPinchStart = null
+    boardDragFeedback = false
   } else if (activeBoardPointers.size === 2) {
     beginBoardPinch()
   }
@@ -384,6 +417,7 @@ function moveBoardPan(event) {
   captureBoardPointer(event.pointerId)
   boardPanning.value = true
   blockBoardClick = true
+  if (!boardDragFeedback) { haptic('drag'); boardDragFeedback = true }
   boardPanX.value = boardDragStart.panX + dx
   boardPanY.value = boardDragStart.panY + dy
   constrainBoardPan()
@@ -400,7 +434,14 @@ function endBoardPan(event) {
     return
   }
   if (!activeBoardPointers.size) {
+    const moved = boardPanning.value
     boardPanning.value = false
+    if (moved) {
+      boardSettling.value = true
+      haptic('release')
+      clearTimeout(boardSettleTimer)
+      boardSettleTimer = setTimeout(() => { boardSettling.value = false }, 220)
+    }
     boardDragStart = null
     boardPinchStart = null
     clearTimeout(boardClickGuardTimer)
@@ -694,24 +735,82 @@ function notify(message) {
   setTimeout(() => { if (error.value === message) error.value = '' }, 2600)
 }
 
+function haptic(kind = 'select') {
+  if (!soundOn.value || !navigator.vibrate) return
+  const patterns = {
+    select: 8, success: 16, draw: [10, 20, 10], place: 18,
+    impact: [35, 24, 45], phase: [16, 28, 22], tick: 12,
+    warning: [24, 32, 24], victory: [18, 28, 32, 40, 50],
+    defeat: [50, 35, 70], drag: 7, release: 10
+  }
+  navigator.vibrate(patterns[kind] || 10)
+}
+
 function tone(kind = 'success') {
   if (!soundOn.value) return
+  haptic(kind)
   try {
-    const context = new AudioContext()
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextClass) return
+    audioContext ||= new AudioContextClass()
+    if (audioContext.state === 'suspended') audioContext.resume()
+    const oscillator = audioContext.createOscillator()
+    const gain = audioContext.createGain()
     oscillator.connect(gain)
-    gain.connect(context.destination)
-    const frequencies = { select: 330, success: 420, draw: 260, place: 520, impact: 110, phase: 190 }
+    gain.connect(audioContext.destination)
+    const frequencies = { select: 330, success: 420, draw: 260, place: 520, impact: 110, phase: 190, tick: 760, warning: 180, victory: 620, defeat: 95 }
+    oscillator.type = ['impact', 'defeat', 'warning'].includes(kind) ? 'triangle' : 'sine'
     oscillator.frequency.value = frequencies[kind] || 420
-    gain.gain.setValueAtTime(kind === 'impact' ? .06 : .035, context.currentTime)
-    gain.gain.exponentialRampToValueAtTime(.001, context.currentTime + (kind === 'impact' ? .2 : .12))
+    const duration = ['impact', 'victory', 'defeat'].includes(kind) ? .24 : .12
+    gain.gain.setValueAtTime(['impact', 'defeat'].includes(kind) ? .06 : .035, audioContext.currentTime)
+    gain.gain.exponentialRampToValueAtTime(.001, audioContext.currentTime + duration)
     oscillator.start()
-    oscillator.stop(context.currentTime + (kind === 'impact' ? .2 : .12))
+    oscillator.stop(audioContext.currentTime + duration)
   } catch {}
 }
 
+function warnBeforeUnload(event) {
+  if (!activeMatch.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+function requestExit(target = '/') {
+  if (!activeMatch.value) {
+    allowRouteLeave.value = true
+    router.push(target)
+    return
+  }
+  pendingExitTarget.value = target
+  showExitConfirm.value = true
+  tone('warning')
+}
+
+function cancelExit() {
+  showExitConfirm.value = false
+  pendingExitTarget.value = '/'
+}
+
+async function confirmExit() {
+  if (!game.value || exiting.value) return
+  exiting.value = true
+  error.value = ''
+  try {
+    const next = await api.leaveMatch(game.value.id, localPlayerId.value)
+    syncGame(next)
+    localStorage.setItem('fieldrealm-match-ban-until', String(Date.now() + 30_000))
+    allowRouteLeave.value = true
+    showExitConfirm.value = false
+    await router.push(pendingExitTarget.value || '/')
+  } catch (e) {
+    notify(e.message)
+  } finally {
+    exiting.value = false
+  }
+}
+
 async function rematch() {
+  if (game.value?.ranked) return router.push('/')
   busy.value = true
   try {
     const next = await api.createMatch()
@@ -732,9 +831,9 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
     <div v-else-if="!game" class="battle-loading error-screen"><b>无法进入弈境</b><span>{{ error }}</span><button class="primary-button" @click="router.push('/')">返回大厅</button></div>
     <template v-else>
       <header class="battle-topbar">
-        <button class="battle-brand" @click="router.push('/')"><ArrowLeft :size="18"/><span class="brand-mark"><i></i><b></b></span><strong>场地弈境</strong></button>
+        <button class="battle-brand" @click="requestExit('/')"><ArrowLeft :size="18"/><span class="brand-mark"><i></i><b></b></span><strong>场地弈境</strong></button>
         <div class="round-meter"><span>第 {{ Math.min(game.round, 8) }} / 8 回合</span><div><i :style="{ width: `${Math.min(game.turnNumber / 16 * 100, 100)}%` }"></i></div><b :class="{ urgent: phaseClockUrgent }">{{ phaseLabel }} <em v-if="phaseClockLabel">{{ phaseClockLabel }}</em></b></div>
-        <div class="battle-tools"><button @click="soundOn = !soundOn" :aria-label="soundOn ? '关闭声音' : '开启声音'"><Volume2 v-if="soundOn"/><VolumeX v-else/></button><button @click="showLog = !showLog"><History/><span>战局记录</span></button><button @click="router.push('/rules')"><BookOpen/><span>规则</span></button><button @click="router.push('/')"><LogOut/></button></div>
+        <div class="battle-tools"><button @click="soundOn = !soundOn" :aria-label="soundOn ? '关闭声音与触感' : '开启声音与触感'"><Volume2 v-if="soundOn"/><VolumeX v-else/></button><button @click="showLog = !showLog"><History/><span>战局记录</span></button><button @click="requestExit('/rules')"><BookOpen/><span>规则</span></button><button aria-label="退出对局" @click="requestExit('/')"><LogOut/></button></div>
       </header>
 
       <section class="opponent-strip player-strip rival-strip">
@@ -753,7 +852,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         <div
           ref="battlefieldViewport"
           class="battlefield-viewport"
-          :class="{ 'is-panning': boardPanning }"
+          :class="{ 'is-panning': boardPanning, 'is-settling': boardSettling }"
           role="region"
           tabindex="0"
           aria-label="九域战场视野。手机可上下左右拖动，滚轮或双指可缩放，按 0 重置视野。"
@@ -831,6 +930,8 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
 
       <transition name="drawer"><aside v-if="showLog" class="battle-log"><header><div><span>战局记录</span><b>第 {{ game.round }} 回合</b></div><button @click="showLog = false"><X/></button></header><ol><li v-for="(line, i) in game.log" :key="i"><i></i><span>{{ line }}</span></li></ol></aside></transition>
 
+      <transition name="fade"><div v-if="showExitConfirm" class="exit-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title"><div class="exit-confirm-card"><span class="exit-warning-icon"><LogOut/></span><small>LEAVE MATCH</small><h2 id="exit-confirm-title">确认退出当前对局？</h2><p>退出后对手将直接获胜，你将在 <strong>30 秒</strong> 内无法创建、加入或匹配新对局。</p><div><button class="secondary-button" :disabled="exiting" @click="cancelExit">继续对局</button><button class="danger-button" :disabled="exiting" @click="confirmExit">{{ exiting ? '正在退出…' : '确认退出' }}</button></div></div></div></transition>
+
       <transition name="draw-reveal">
         <div v-if="drawReveal" class="draw-overlay">
           <div class="draw-stage" :class="{ revealed: drawReveal.revealed }">
@@ -874,7 +975,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
       <transition name="combat-overlay"><div v-if="combatFx" class="combat-overlay" :class="`combat-${combatFx.stage}`"><div class="combat-topline"><span>CONTEST RESOLUTION</span><b>场地争夺</b></div><div class="duel-scene"><div class="combat-side attacker-side"><span class="combat-avatar">{{ combatFx.attacker.name.slice(-1) }}</span><small>进攻单位</small><b>{{ combatFx.attacker.name }}</b><strong>{{ combatFx.attackPower }} <em>战力</em></strong></div><div class="combat-middle"><span class="energy-ring"></span><Swords :size="40"/><i></i><b>{{ combatFx.stage === 'charge' ? '蓄势冲锋' : combatFx.stage === 'clash' ? '交锋！' : '结算完成' }}</b></div><div class="combat-side defender-side"><span class="combat-site-glyph">◇</span><small>防守场地</small><b>{{ combatFx.target.name }}</b><strong>{{ combatFx.defense }} <em>守力</em></strong></div></div><div v-if="combatFx.stage === 'result'" class="combat-result"><Zap :size="17"/>{{ combatFx.result }}</div></div></transition>
 
       <div v-if="game.waitingForOpponent" class="victory-overlay waiting-overlay"><div class="victory-card"><span class="victory-sigil">&#9203;</span><small>ONLINE ROOM</small><h2>&#31561;&#24453;&#23545;&#25163;&#21152;&#20837;</h2><p>&#25226;&#25151;&#38388;&#21495;&#21457;&#32473;&#26379;&#21451;</p><div class="room-code">{{ game.id }}</div><button class="secondary-button" @click="router.push('/')">&#36820;&#22238;&#22823;&#21381;</button></div></div>
-      <div v-if="game.phase === 'FINISHED'" class="victory-overlay"><div class="victory-card" :class="{ lost: game.winnerId !== localPlayerId }"><span class="victory-sigil">{{ game.winnerId === localPlayerId ? '✦' : '◇' }}</span><small>{{ game.victoryType }}</small><h2>{{ game.winnerId === localPlayerId ? '主动权尽在掌握' : '棋局仍有回响' }}</h2><p>{{ game.statusText }}</p><div class="final-score"><span><b>{{ player.score }}</b><small>{{ player.name }}</small></span><i>:</i><span><b>{{ rival.score }}</b><small>{{ rival.name }}</small></span></div><div class="victory-actions"><button class="primary-button" @click="rematch"><RotateCcw/>再弈一局</button><button class="secondary-button" @click="router.push('/')">返回大厅</button></div></div></div>
+      <div v-if="game.phase === 'FINISHED'" class="victory-overlay"><div class="victory-card" :class="{ lost: game.winnerId !== localPlayerId }"><span class="victory-sigil">{{ game.winnerId === localPlayerId ? '✦' : '◇' }}</span><small>{{ game.victoryType }}</small><h2>{{ game.winnerId === localPlayerId ? '主动权尽在掌握' : '棋局仍有回响' }}</h2><p>{{ game.statusText }}</p><div class="final-score"><span><b>{{ player.score }}</b><small>{{ player.name }}</small></span><i>:</i><span><b>{{ rival.score }}</b><small>{{ rival.name }}</small></span></div><div v-if="game.ranked" class="rating-result" :class="{ positive: ratingDelta >= 0, negative: ratingDelta < 0 }"><small>本场天梯积分</small><strong>{{ ratingDirection }} {{ ratingDelta >= 0 ? `+${ratingDelta}` : ratingDelta }}</strong><span v-if="ratingAfter !== undefined">当前积分 {{ ratingAfter }}</span></div><div class="victory-actions"><button v-if="!game.ranked" class="primary-button" @click="rematch"><RotateCcw/>再弈一局</button><button class="secondary-button" @click="router.push('/')">返回大厅</button></div></div></div>
     </template>
   </div>
 </template>

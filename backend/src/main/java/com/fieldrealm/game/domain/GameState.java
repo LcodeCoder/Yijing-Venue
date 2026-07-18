@@ -2,7 +2,9 @@ package com.fieldrealm.game.domain;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class GameState {
     private String id;
@@ -11,6 +13,8 @@ public class GameState {
     private boolean ranked;
     private boolean waitingForOpponent;
     private boolean rankedResultRecorded;
+    private Map<String, Integer> ratingChanges = new LinkedHashMap<>();
+    private Map<String, Integer> ratingsAfter = new LinkedHashMap<>();
     private int round = 1;
     private int turnNumber = 1;
     private int activePlayerIndex;
@@ -27,7 +31,7 @@ public class GameState {
     private List<String> log = new ArrayList<>();
     private Instant updatedAt = Instant.now();
     private Instant phaseEndsAt;
-    private int phaseDurationSeconds = 15;
+    private int phaseDurationSeconds = 30;
 
     public PlayerState activePlayer() { return players.get(activePlayerIndex); }
     public PlayerState opponent() { return players.get(1 - activePlayerIndex); }
@@ -44,6 +48,10 @@ public class GameState {
     public void setWaitingForOpponent(boolean waitingForOpponent) { this.waitingForOpponent = waitingForOpponent; }
     public boolean isRankedResultRecorded() { return rankedResultRecorded; }
     public void setRankedResultRecorded(boolean rankedResultRecorded) { this.rankedResultRecorded = rankedResultRecorded; }
+    public Map<String, Integer> getRatingChanges() { return ratingChanges; }
+    public void setRatingChanges(Map<String, Integer> ratingChanges) { this.ratingChanges = ratingChanges; }
+    public Map<String, Integer> getRatingsAfter() { return ratingsAfter; }
+    public void setRatingsAfter(Map<String, Integer> ratingsAfter) { this.ratingsAfter = ratingsAfter; }
     public int getRound() { return round; }
     public void setRound(int round) { this.round = round; }
     public int getTurnNumber() { return turnNumber; }

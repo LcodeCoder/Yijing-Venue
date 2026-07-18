@@ -25,6 +25,8 @@ export const api = {
   createMatch: (playerName = '', options = {}) => json('/api/matches', { method: 'POST', body: JSON.stringify({ mode: options.mode || 'AI', playerName, boardSize: options.boardSize || 3, ranked: Boolean(options.ranked) }) }),
   joinMatch: (id, playerName = '') => json(`/api/matches/${id}/join`, { method: 'POST', body: JSON.stringify({ playerName }) }),
   match: id => json(`/api/matches/${id}`),
+  matchCooldown: () => json('/api/matches/cooldown'),
+  leaveMatch: (id, playerId) => json(`/api/matches/${id}/leave`, { method: 'POST', body: JSON.stringify({ playerId }) }),
   queueRanked: boardSize => json('/api/matchmaking/queue', { method: 'POST', body: JSON.stringify({ boardSize }) }),
   queueStatus: () => json('/api/matchmaking/status'), cancelQueue: () => json('/api/matchmaking/queue', { method: 'DELETE' }),
   adminCards: () => json('/api/admin/cards'),

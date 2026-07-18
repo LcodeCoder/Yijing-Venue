@@ -20,6 +20,7 @@ public class MatchmakingService {
 
     public synchronized Map<String, Object> queue(String authorization, int requestedSize) {
         UserAccount user = auth.require(authorization);
+        auth.ensureMatchAllowed(user);
         int size = requestedSize == 4 || requestedSize == 5 ? requestedSize : 3;
         Map<String, Object> current = statuses.get(user.getId());
         if (current != null && !"CANCELLED".equals(current.get("status"))) return current;
