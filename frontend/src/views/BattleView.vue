@@ -29,6 +29,7 @@ const combatFx = ref(null)
 const placementFx = ref(null)
 const sitePulseIndex = ref(null)
 const aiFx = ref(null)
+const opponentFxBusy = ref(false)
 const initiativeFx = ref(false)
 const initiativeStage = ref('ready')
 const initiativePlayerRoll = ref(1)
@@ -72,8 +73,12 @@ let dismissRevealTimer
 let phaseTimer
 let combatTimer
 let placementTimer
-let aiTimer
 let countdownTimer
+let opponentFxProcessing = false
+let pendingDrawCards = []
+let opponentFxRunId = 0
+const opponentFxQueue = []
+const recentOpponentFxKeys = new Set()
 
 const cardMap = computed(() => Object.fromEntries(cards.value.map(c => [c.id, c])))
 const localPlayerId = computed(() => game.value?.players?.find(p => auth.user?.id && p.accountId === auth.user.id)?.id || localStorage.getItem(`fieldrealm-player-${game.value?.id}`) || 'p1')
@@ -83,7 +88,7 @@ const localPlayerIndex = computed(() => game.value?.players?.findIndex(p => p.id
 const player = computed(() => game.value?.players?.[localPlayerIndex.value])
 const rival = computed(() => game.value?.players?.[1 - localPlayerIndex.value])
 const active = computed(() => game.value?.players?.[game.value?.activePlayerIndex])
-const humanTurn = computed(() => !game.value?.waitingForOpponent && active.value?.id === localPlayerId.value && game.value?.phase !== 'FINISHED')
+const humanTurn = computed(() => !opponentFxBusy.value && !game.value?.waitingForOpponent && active.value?.id === localPlayerId.value && game.value?.phase !== 'FINISHED')
 const hand = computed(() => player.value?.hand?.map(id => cardMap.value[id]).filter(Boolean) || [])
 const playerReady = computed(() => Boolean(game.value?.sites?.some(site => site.ownerId === localPlayerId.value)))
 const rivalReady = computed(() => Boolean(game.value?.sites?.some(site => site.ownerId === rivalPlayerId.value)))
@@ -193,7 +198,9 @@ onBeforeUnmount(() => {
   clearTimeout(phaseTimer)
   clearTimeout(combatTimer)
   clearTimeout(placementTimer)
-  clearTimeout(aiTimer)
+  opponentFxRunId++
+  opponentFxQueue.length = 0
+  pendingDrawCards = []
   clearInterval(initiativeRollTimer)
   clearTimeout(initiativeRevealTimer)
   clearTimeout(boardClickGuardTimer)
@@ -213,15 +220,15 @@ function connect() {
 
 function syncGame(next) {
   const previous = game.value
+  let opponentAction = null
+  let newCards = []
+
   if (previous && next) {
-    if (next.players?.[next.activePlayerIndex]?.id !== localPlayerId.value && (next.statusText !== previous.statusText || JSON.stringify(next.sites) !== JSON.stringify(previous.sites))) {
-      showAiFx(next.statusText || `${next.players?.[1]?.name || '对手'}正在行动`)
-    }
+    opponentAction = describeOpponentAction(previous, next)
     if (previous.phase === 'DEPLOY' && next.phase === 'CONTEST' && next.players?.[next.activePlayerIndex]?.id === localPlayerId.value) showPhaseFx('CONTEST')
     if (next.turnNumber > previous.turnNumber) {
       const oldHand = previous.players?.find(p => p.id === localPlayerId.value)?.hand || []
-      const newCards = addedCardIds(oldHand, next.players?.find(p => p.id === localPlayerId.value)?.hand || []).map(id => cardMap.value[id]).filter(Boolean)
-      if (newCards.length && next.players?.[next.activePlayerIndex]?.id === localPlayerId.value) showDrawFx(newCards)
+      newCards = addedCardIds(oldHand, next.players?.find(p => p.id === localPlayerId.value)?.hand || []).map(id => cardMap.value[id]).filter(Boolean)
     }
     const changedSite = next.sites?.find(site => {
       const old = previous.sites?.find(item => item.index === site.index)
@@ -232,9 +239,114 @@ function syncGame(next) {
       tone(next.winnerId === localPlayerId.value ? 'victory' : 'defeat')
     }
   }
+
   const initiativeResolved = Boolean(previous && !previous.initialContestResolved && next?.initialContestResolved && next.playerRoll > 0)
   game.value = next
   if (initiativeResolved) showInitiativeFx()
+  if (opponentAction) enqueueOpponentFx(opponentAction)
+  if (newCards.length && next.players?.[next.activePlayerIndex]?.id === localPlayerId.value) queueDrawFx(newCards)
+}
+
+function unitsWithSites(state, ownerId) {
+  return state?.sites?.flatMap(site => (site.units || []).map(unit => ({
+    ...unit,
+    siteIndex: site.index,
+    siteName: site.name,
+    siteEffectCode: site.effectCode
+  }))).filter(unit => unit.ownerId === ownerId) || []
+}
+
+function opponentActionKey(action) {
+  return [action.kind, action.turnNumber, action.attacker?.instanceId, action.target?.index, action.detail, action.result].filter(value => value !== undefined).join(':')
+}
+
+function rememberOpponentAction(key) {
+  if (!key || recentOpponentFxKeys.has(key)) return false
+  recentOpponentFxKeys.add(key)
+  if (recentOpponentFxKeys.size > 80) recentOpponentFxKeys.delete(recentOpponentFxKeys.values().next().value)
+  return true
+}
+
+function describeOpponentAction(previous, next) {
+  const opponentId = rivalPlayerId.value
+  const previousActiveId = previous.players?.[previous.activePlayerIndex]?.id
+  const nextActiveId = next.players?.[next.activePlayerIndex]?.id
+  const opponentWasActing = previousActiveId === opponentId || nextActiveId === opponentId
+  if (!opponentWasActing) return null
+
+  const beforeUnits = unitsWithSites(previous, opponentId)
+  const afterUnits = unitsWithSites(next, opponentId)
+  const beforeUnitsById = new Map(beforeUnits.map(unit => [unit.instanceId, unit]))
+  const attackMatch = String(next.statusText || '').match(/战力\s*(\d+)\s*vs\s*守力\s*(\d+)/i)
+
+  if (attackMatch) {
+    const attacker = afterUnits.find(unit => unit.exhausted && beforeUnitsById.has(unit.instanceId) && !beforeUnitsById.get(unit.instanceId).exhausted)
+    if (attacker) {
+      const targetName = String(previous.statusText || '').match(/争夺「([^」]+)」/)?.[1]
+      const ownershipChange = next.sites?.find(site => {
+        const oldSite = previous.sites?.find(item => item.index === site.index)
+        return oldSite && oldSite.ownerId !== site.ownerId
+      })
+      const targetBefore = previous.sites?.find(site => site.name === targetName)
+        || previous.sites?.find(site => site.index === ownershipChange?.index)
+        || { index: ownershipChange?.index, name: targetName || '未知领域', baseGuard: Number(attackMatch[2]) }
+      const targetAfter = next.sites?.find(site => site.index === targetBefore.index) || ownershipChange || targetBefore
+      const sourceBefore = beforeUnitsById.get(attacker.instanceId) || attacker
+      const captured = Boolean(targetBefore?.ownerId !== undefined && targetBefore.ownerId !== targetAfter?.ownerId)
+      const result = next.statusText || '敌方争夺结算完成'
+      const action = {
+        kind: 'attack',
+        turnNumber: next.turnNumber,
+        attacker: { ...attacker, siteName: sourceBefore.siteName },
+        target: { ...targetBefore },
+        attackPower: Number(attackMatch[1]),
+        defense: Number(attackMatch[2]),
+        captured,
+        result,
+        detail: `${attacker.name} 从「${sourceBefore.siteName}」进攻「${targetBefore.name}」`
+      }
+      action.key = opponentActionKey(action)
+      return action
+    }
+  }
+
+  const newlyDeployedUnit = afterUnits.find(unit => !beforeUnitsById.has(unit.instanceId))
+  if (newlyDeployedUnit) {
+    const action = {
+      kind: 'deploy',
+      turnNumber: next.turnNumber,
+      detail: `${newlyDeployedUnit.name} 已部署至「${newlyDeployedUnit.siteName}」`
+    }
+    action.key = opponentActionKey(action)
+    return action
+  }
+
+  const claimedSite = next.sites?.find(site => {
+    const oldSite = previous.sites?.find(item => item.index === site.index)
+    return site.ownerId === opponentId && oldSite?.ownerId !== opponentId
+  })
+  if (claimedSite) {
+    const action = {
+      kind: 'deploy',
+      turnNumber: next.turnNumber,
+      detail: `对手将「${claimedSite.name}」纳入布阵`
+    }
+    action.key = opponentActionKey(action)
+    return action
+  }
+
+  if (next.statusText && next.statusText !== previous.statusText) {
+    const attack = next.statusText.includes('争夺') || next.statusText.includes('战力')
+    const deploy = next.statusText.includes('部署') || next.statusText.includes('驻场')
+    const action = {
+      kind: attack ? 'target' : deploy ? 'deploy' : 'thinking',
+      turnNumber: next.turnNumber,
+      detail: next.statusText
+    }
+    action.key = opponentActionKey(action)
+    return action
+  }
+  return null
 }
 
 function addedCardIds(previousIds, nextIds) {
@@ -652,7 +764,8 @@ async function resolveAttack(site) {
   const source = game.value.sites.find(item => item.units.some(unit => unit.instanceId === attacker.instanceId))
   const attackPower = attacker.power + (source?.effectCode === 'FORGE' ? 1 : 0) + (attacker.keyword === 'DUELIST' && site.units.length === 0 ? 1 : 0)
   const defense = site.baseGuard + site.units.filter(unit => !unit.sealed).reduce((sum, unit) => sum + unit.guard, 0)
-  combatFx.value = { attacker: { ...attacker }, target: { ...site }, attackPower, defense, stage: 'charge', result: '' }
+  const targetOwnerBefore = site.ownerId
+  combatFx.value = { attacker: { ...attacker, siteName: source?.name }, target: { ...site }, attackPower, defense, stage: 'charge', result: '', opponent: false, captured: false }
   busy.value = true
   clearSelection()
   await sleep(460)
@@ -664,6 +777,7 @@ async function resolveAttack(site) {
     const next = await api.attack(game.value.id, { playerId: localPlayerId.value, attackerUnitId: attacker.instanceId, targetSiteIndex: site.index })
     syncGame(next)
     combatFx.value.result = next.statusText
+    combatFx.value.captured = next.sites?.find(item => item.index === site.index)?.ownerId !== targetOwnerBefore
     combatFx.value.stage = 'result'
     pulse.value = '争夺结算'
     clearTimeout(pulseTimer)
@@ -772,6 +886,17 @@ function dismissInitiativeFx() {
   initiativeStage.value = 'ready'
 }
 
+function queueDrawFx(newCards) {
+  pendingDrawCards.push(...newCards)
+  showPendingDrawFx()
+}
+
+function showPendingDrawFx() {
+  if (!pendingDrawCards.length || opponentFxProcessing || opponentFxQueue.length || opponentFxBusy.value || initiativeFx.value || phaseFx.value || combatFx.value || drawReveal.value) return
+  const cardsToReveal = pendingDrawCards.splice(0)
+  showDrawFx(cardsToReveal)
+}
+
 function showDrawFx(newCards) {
   clearTimeout(revealTimer)
   clearTimeout(dismissRevealTimer)
@@ -787,6 +912,7 @@ function dismissDrawFx() {
   clearTimeout(revealTimer)
   clearTimeout(dismissRevealTimer)
   drawReveal.value = null
+  queueMicrotask(showPendingDrawFx)
 }
 
 function showPhaseFx(kind) {
@@ -808,13 +934,78 @@ function flashSite(index) {
   setTimeout(() => { if (sitePulseIndex.value === index) sitePulseIndex.value = null }, 900)
 }
 
-function showAiFx(detail) {
-  clearTimeout(aiTimer)
-  const attack = detail.includes('争夺') || detail.includes('战力')
-  const deploy = detail.includes('部署') || detail.includes('驻场')
-  aiFx.value = { detail, kind: attack ? 'attack' : deploy ? 'deploy' : 'thinking' }
-  tone(attack ? 'impact' : 'place')
-  aiTimer = setTimeout(() => { aiFx.value = null }, 1150)
+function enqueueOpponentFx(action) {
+  if (!action || !rememberOpponentAction(action.key)) return
+  opponentFxQueue.push(action)
+  void processOpponentFxQueue()
+}
+
+async function waitForOpponentFxStage(runId) {
+  while (runId === opponentFxRunId && (initiativeFx.value || phaseFx.value || drawReveal.value || (combatFx.value && !combatFx.value.opponent))) {
+    await sleep(120)
+  }
+  return runId === opponentFxRunId
+}
+
+async function processOpponentFxQueue() {
+  if (opponentFxProcessing) return
+  opponentFxProcessing = true
+  opponentFxBusy.value = true
+  const runId = opponentFxRunId
+  try {
+    while (opponentFxQueue.length && runId === opponentFxRunId) {
+      if (!await waitForOpponentFxStage(runId)) break
+      const action = opponentFxQueue.shift()
+      if (action.kind === 'attack') await playOpponentAttackFx(action, runId)
+      else await playOpponentActionFx(action, runId)
+    }
+  } finally {
+    if (runId === opponentFxRunId) {
+      aiFx.value = null
+      if (combatFx.value?.opponent) combatFx.value = null
+      opponentFxProcessing = false
+      opponentFxBusy.value = false
+      showPendingDrawFx()
+    }
+  }
+}
+
+async function playOpponentActionFx(action, runId) {
+  aiFx.value = { detail: action.detail, kind: action.kind === 'target' ? 'attack' : action.kind }
+  tone(action.kind === 'target' ? 'warning' : action.kind === 'thinking' ? 'select' : 'place')
+  await sleep(action.kind === 'target' ? 900 : 780)
+  if (runId === opponentFxRunId) aiFx.value = null
+  await sleep(120)
+}
+
+async function playOpponentAttackFx(action, runId) {
+  aiFx.value = { detail: action.detail, kind: 'attack' }
+  tone('warning')
+  await sleep(720)
+  if (runId !== opponentFxRunId) return
+  aiFx.value = null
+  combatFx.value = {
+    attacker: action.attacker,
+    target: action.target,
+    attackPower: action.attackPower,
+    defense: action.defense,
+    stage: 'charge',
+    result: action.result,
+    opponent: true,
+    captured: action.captured
+  }
+  await sleep(620)
+  if (runId !== opponentFxRunId || !combatFx.value) return
+  combatFx.value.stage = 'clash'
+  tone('impact')
+  await sleep(360)
+  if (runId !== opponentFxRunId || !combatFx.value) return
+  combatFx.value.stage = 'result'
+  if (action.target?.index !== undefined) flashSite(action.target.index)
+  tone(action.captured ? 'phase' : 'success')
+  await sleep(1750)
+  if (runId === opponentFxRunId && combatFx.value?.opponent) combatFx.value = null
+  await sleep(180)
 }
 
 function notify(message) {
@@ -996,7 +1187,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         <div class="battle-flow-hint"><span class="hint-dot"></span><span v-if="game.phase === 'DEPLOY'">{{ initialDeployment ? '先部署己方场地，再完成部署等待对手场地显现' : '从下方手牌开始：选卡后，点击场地放下它' }}</span><span v-else>金色高亮为射程内目标；中央天元与八个外域均相邻</span></div>
         <transition name="impact"><div v-if="pulse" class="impact-banner"><Sparkles/>{{ pulse }}</div></transition>
         <transition name="fade"><div v-if="error" class="battle-toast"><X :size="16"/>{{ error }}</div></transition>
-        <transition name="impact"><div v-if="aiFx" class="ai-action-banner" :class="`ai-${aiFx.kind}`"><span class="ai-action-icon"><Swords v-if="aiFx.kind === 'attack'"/><Sparkles v-else/></span><div><small>OPPONENT ACTION</small><b>雾隐执棋者正在行动</b><p>{{ aiFx.detail }}</p></div></div></transition>
+        <transition name="impact"><div v-if="aiFx" class="ai-action-banner" :class="`ai-${aiFx.kind}`"><span class="ai-action-icon"><Swords v-if="aiFx.kind === 'attack'"/><Sparkles v-else/></span><div><small>OPPONENT ACTION</small><b>{{ rival?.name || '对手' }}正在行动</b><p>{{ aiFx.detail }}</p></div></div></transition>
         <div v-if="placementFx" class="placement-flight" :class="`to-site-${placementFx.targetSiteIndex}`" :style="{ '--flight-color': placementFx.card ? '#63d2a5' : '#efc36f' }"><span class="flight-trail"></span><GameCard v-if="placementFx.card" class="flight-card" :card="placementFx.card" compact disabled/><span class="flight-label">{{ placementFx.card.name }}</span><Zap :size="18"/></div>
       </main>
 
@@ -1064,7 +1255,21 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
 
       <transition name="phase-overlay"><div v-if="phaseFx" class="phase-overlay"><div class="phase-crest"><span>✦</span><small>PHASE SHIFT</small></div><p>NOW ENTERING</p><h2>{{ phaseFx.title }}</h2><span>{{ phaseFx.subtitle }}</span><div class="phase-line"><i></i></div></div></transition>
 
-      <transition name="combat-overlay"><div v-if="combatFx" class="combat-overlay" :class="`combat-${combatFx.stage}`"><div class="combat-topline"><span>CONTEST RESOLUTION</span><b>场地争夺</b></div><div class="duel-scene"><div class="combat-side attacker-side"><span class="combat-avatar">{{ combatFx.attacker.name.slice(-1) }}</span><small>进攻单位</small><b>{{ combatFx.attacker.name }}</b><strong>{{ combatFx.attackPower }} <em>战力</em></strong></div><div class="combat-middle"><span class="energy-ring"></span><Swords :size="40"/><i></i><b>{{ combatFx.stage === 'charge' ? '蓄势冲锋' : combatFx.stage === 'clash' ? '交锋！' : '结算完成' }}</b></div><div class="combat-side defender-side"><span class="combat-site-glyph">◇</span><small>防守场地</small><b>{{ combatFx.target.name }}</b><strong>{{ combatFx.defense }} <em>守力</em></strong></div></div><div v-if="combatFx.stage === 'result'" class="combat-result"><Zap :size="17"/>{{ combatFx.result }}</div></div></transition>
+      <transition name="combat-overlay">
+        <div v-if="combatFx" class="combat-overlay" :class="[`combat-${combatFx.stage}`, { 'opponent-combat': combatFx.opponent, 'combat-captured': combatFx.captured }]">
+          <div class="combat-topline">
+            <span>{{ combatFx.opponent ? 'OPPONENT CONTEST' : 'CONTEST RESOLUTION' }}</span>
+            <b>{{ combatFx.opponent ? `${rival?.name || '对手'}发起争夺` : '我方发起争夺' }}</b>
+            <small v-if="combatFx.attacker.siteName" class="combat-route">「{{ combatFx.attacker.siteName }}」 → 「{{ combatFx.target.name }}」</small>
+          </div>
+          <div class="duel-scene">
+            <div class="combat-side attacker-side"><span class="combat-avatar">{{ combatFx.attacker.name.slice(-1) }}</span><small>{{ combatFx.opponent ? '敌方进攻单位' : '进攻单位' }}</small><b>{{ combatFx.attacker.name }}</b><strong>{{ combatFx.attackPower }} <em>战力</em></strong></div>
+            <div class="combat-middle"><span class="energy-ring"></span><Swords :size="40"/><i></i><b>{{ combatFx.stage === 'charge' ? (combatFx.opponent ? '敌方锁定目标' : '蓄势冲锋') : combatFx.stage === 'clash' ? '交锋！' : combatFx.captured ? '领域归属易手' : '争夺结算完成' }}</b></div>
+            <div class="combat-side defender-side"><span class="combat-site-glyph">◇</span><small>被争夺领域</small><b>{{ combatFx.target.name }}</b><strong>{{ combatFx.defense }} <em>守力</em></strong></div>
+          </div>
+          <div v-if="combatFx.stage === 'result'" class="combat-result"><Zap :size="17"/><span>{{ combatFx.result }}</span><b>{{ combatFx.captured ? '领域已易手' : '领域仍守住' }}</b></div>
+        </div>
+      </transition>
 
       <div v-if="game.waitingForOpponent" class="victory-overlay waiting-overlay"><div class="victory-card"><span class="victory-sigil">&#9203;</span><small>ONLINE ROOM</small><h2>&#31561;&#24453;&#23545;&#25163;&#21152;&#20837;</h2><p>&#25226;&#25151;&#38388;&#21495;&#21457;&#32473;&#26379;&#21451;</p><div class="room-code">{{ game.id }}</div><button class="secondary-button" @click="router.push('/')">&#36820;&#22238;&#22823;&#21381;</button></div></div>
       <div v-if="game.phase === 'FINISHED'" class="victory-overlay"><div class="victory-card" :class="{ lost: game.winnerId !== localPlayerId }"><span class="victory-sigil">{{ game.winnerId === localPlayerId ? '✦' : '◇' }}</span><small>{{ game.victoryType }}</small><h2>{{ game.winnerId === localPlayerId ? '主动权尽在掌握' : '棋局仍有回响' }}</h2><p>{{ game.statusText }}</p><div class="final-score"><span><b>{{ player.score }}</b><small>{{ player.name }}</small></span><i>:</i><span><b>{{ rival.score }}</b><small>{{ rival.name }}</small></span></div><div v-if="game.ranked" class="rating-result" :class="{ positive: ratingDelta >= 0, negative: ratingDelta < 0 }"><small>本场天梯积分</small><strong>{{ ratingDirection }} {{ ratingDelta >= 0 ? `+${ratingDelta}` : ratingDelta }}</strong><span v-if="ratingAfter !== undefined">当前积分 {{ ratingAfter }}</span></div><div class="victory-actions"><button v-if="!game.ranked" class="primary-button" @click="rematch"><RotateCcw/>再弈一局</button><button class="secondary-button" @click="router.push('/')">返回大厅</button></div></div></div>
