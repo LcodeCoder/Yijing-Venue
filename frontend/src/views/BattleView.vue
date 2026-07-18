@@ -39,10 +39,14 @@ const boardPanX = ref(0)
 const boardPanY = ref(0)
 const boardPanning = ref(false)
 const boardSettling = ref(false)
+const boardGliding = ref(false)
+const boardFeedbackX = ref(0)
+const boardFeedbackY = ref(0)
 const showExitConfirm = ref(false)
 const pendingExitTarget = ref('/')
 const allowRouteLeave = ref(false)
 const exiting = ref(false)
+const exitError = ref('')
 const BOARD_WIDTH = 1320
 const BOARD_HEIGHT = 820
 const activeBoardPointers = new Map()
@@ -52,6 +56,10 @@ let blockBoardClick = false
 let boardClickGuardTimer
 let boardSettleTimer
 let boardDragFeedback = false
+let boardVelocityX = 0
+let boardVelocityY = 0
+let boardLastMoveAt = 0
+let boardMomentumFrame
 let audioContext
 let boardResizeObserver
 let initiativeRollTimer
@@ -84,6 +92,7 @@ const bothInitialSitesReady = computed(() => Boolean(playerReady.value && rivalR
 const dieGlyph = value => ['', '\u2680', '\u2681', '\u2682', '\u2683', '\u2684', '\u2685'][Number(value) || 1]
 const contestStarter = computed(() => game.value?.players?.[game.value?.contestStarterIndex])
 const boardTransform = computed(() => `translate3d(${boardPanX.value}px, ${boardPanY.value}px, 0) scale(${boardZoom.value})`)
+const boardFeedbackStyle = computed(() => ({ '--drag-glow-x': `${50 - boardFeedbackX.value * 42}%`, '--drag-glow-y': `${50 - boardFeedbackY.value * 42}%`, '--drag-strength': Math.min(1, Math.hypot(boardFeedbackX.value, boardFeedbackY.value)).toFixed(2) }))
 const boardZoomLabel = computed(() => `${Math.round(boardZoom.value * 100)}%`)
 const targetMode = computed(() => {
   if (selectedCard.value) {
@@ -117,6 +126,7 @@ const secondsRemaining = computed(() => {
 const phaseClockLabel = computed(() => game.value?.phase === 'FINISHED' ? '' : `${secondsRemaining.value}s`)
 const phaseClockUrgent = computed(() => secondsRemaining.value > 0 && secondsRemaining.value <= 5)
 const activeMatch = computed(() => Boolean(game.value && !game.value.waitingForOpponent && game.value.phase !== 'FINISHED'))
+const exitPenaltyApplies = computed(() => game.value?.mode === 'PVP')
 const ratingDelta = computed(() => game.value?.ratingChanges?.[localPlayerId.value] ?? 0)
 const ratingAfter = computed(() => game.value?.ratingsAfter?.[localPlayerId.value])
 const ratingDirection = computed(() => ratingDelta.value >= 0 ? '获得' : '减少')
@@ -188,6 +198,7 @@ onBeforeUnmount(() => {
   clearTimeout(initiativeRevealTimer)
   clearTimeout(boardClickGuardTimer)
   clearTimeout(boardSettleTimer)
+  cancelAnimationFrame(boardMomentumFrame)
   boardResizeObserver?.disconnect()
   activeBoardPointers.clear()
   audioContext?.close?.().catch?.(() => {})
@@ -305,6 +316,7 @@ function constrainBoardPan() {
 }
 
 function resetBoardView() {
+  cancelBoardMomentum()
   const viewport = battlefieldViewport.value
   if (!viewport) return
   const fit = Math.min(viewport.clientWidth / BOARD_WIDTH, viewport.clientHeight / BOARD_HEIGHT)
@@ -340,6 +352,7 @@ function changeBoardZoom(delta) {
 }
 
 function zoomBattlefield(event) {
+  cancelBoardMomentum()
   const viewport = battlefieldViewport.value
   if (!viewport) return
   const rect = viewport.getBoundingClientRect()
@@ -373,7 +386,70 @@ function captureBoardPointer(pointerId) {
   if (!viewport?.hasPointerCapture?.(pointerId)) viewport?.setPointerCapture?.(pointerId)
 }
 
+function cancelBoardMomentum() {
+  cancelAnimationFrame(boardMomentumFrame)
+  boardGliding.value = false
+  boardSettling.value = false
+  boardVelocityX = 0
+  boardVelocityY = 0
+  boardFeedbackX.value = 0
+  boardFeedbackY.value = 0
+}
+
+function updateDirectionalFeedback(dx, dy, elapsed = 16) {
+  const safeElapsed = Math.max(8, elapsed)
+  boardVelocityX = clamp(dx / safeElapsed, -1.35, 1.35)
+  boardVelocityY = clamp(dy / safeElapsed, -1.35, 1.35)
+  boardFeedbackX.value = clamp(boardVelocityX / 1.1, -1, 1)
+  boardFeedbackY.value = clamp(boardVelocityY / 1.1, -1, 1)
+}
+
+function startBoardMomentum() {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches || Math.hypot(boardVelocityX, boardVelocityY) < .08) {
+    boardSettling.value = true
+    clearTimeout(boardSettleTimer)
+    boardSettleTimer = setTimeout(() => {
+      boardSettling.value = false
+      boardFeedbackX.value = 0
+      boardFeedbackY.value = 0
+    }, 160)
+    return
+  }
+  boardGliding.value = true
+  boardSettling.value = true
+  let previousTime = performance.now()
+  const glide = now => {
+    const elapsed = Math.min(32, now - previousTime)
+    previousTime = now
+    const previousX = boardPanX.value
+    const previousY = boardPanY.value
+    boardPanX.value += boardVelocityX * elapsed
+    boardPanY.value += boardVelocityY * elapsed
+    constrainBoardPan()
+    if (boardPanX.value === previousX) boardVelocityX = 0
+    if (boardPanY.value === previousY) boardVelocityY = 0
+    const decay = Math.pow(.86, elapsed / 16)
+    boardVelocityX *= decay
+    boardVelocityY *= decay
+    boardFeedbackX.value = clamp(boardVelocityX / 1.1, -1, 1)
+    boardFeedbackY.value = clamp(boardVelocityY / 1.1, -1, 1)
+    if (Math.hypot(boardVelocityX, boardVelocityY) > .025) {
+      boardMomentumFrame = requestAnimationFrame(glide)
+    } else {
+      boardGliding.value = false
+      boardVelocityX = 0
+      boardVelocityY = 0
+      boardFeedbackX.value = 0
+      boardFeedbackY.value = 0
+      clearTimeout(boardSettleTimer)
+      boardSettleTimer = setTimeout(() => { boardSettling.value = false }, 120)
+    }
+  }
+  boardMomentumFrame = requestAnimationFrame(glide)
+}
+
 function startBoardPan(event) {
+  cancelBoardMomentum()
   if (event.pointerType === 'mouse' && event.button !== 0) return
   if (event.target?.closest?.('button')) return
   const point = pointerPosition(event)
@@ -384,6 +460,7 @@ function startBoardPan(event) {
     boardDragStart = { ...point, panX: boardPanX.value, panY: boardPanY.value }
     boardPinchStart = null
     boardDragFeedback = false
+    boardLastMoveAt = performance.now()
   } else if (activeBoardPointers.size === 2) {
     beginBoardPinch()
   }
@@ -407,6 +484,10 @@ function moveBoardPan(event) {
     boardPanY.value = centerY - boardPinchStart.worldY * zoom
     constrainBoardPan()
     blockBoardClick = true
+    boardVelocityX = 0
+    boardVelocityY = 0
+    boardFeedbackX.value = 0
+    boardFeedbackY.value = 0
     return
   }
   if (!boardDragStart) return
@@ -418,9 +499,14 @@ function moveBoardPan(event) {
   boardPanning.value = true
   blockBoardClick = true
   if (!boardDragFeedback) { haptic('drag'); boardDragFeedback = true }
+  const previousPanX = boardPanX.value
+  const previousPanY = boardPanY.value
   boardPanX.value = boardDragStart.panX + dx
   boardPanY.value = boardDragStart.panY + dy
   constrainBoardPan()
+  const now = performance.now()
+  updateDirectionalFeedback(boardPanX.value - previousPanX, boardPanY.value - previousPanY, now - boardLastMoveAt)
+  boardLastMoveAt = now
 }
 
 function endBoardPan(event) {
@@ -437,10 +523,11 @@ function endBoardPan(event) {
     const moved = boardPanning.value
     boardPanning.value = false
     if (moved) {
-      boardSettling.value = true
       haptic('release')
-      clearTimeout(boardSettleTimer)
-      boardSettleTimer = setTimeout(() => { boardSettling.value = false }, 220)
+      startBoardMomentum()
+    } else {
+      boardFeedbackX.value = 0
+      boardFeedbackY.value = 0
     }
     boardDragStart = null
     boardPinchStart = null
@@ -782,6 +869,7 @@ function requestExit(target = '/') {
     return
   }
   pendingExitTarget.value = target
+  exitError.value = ''
   showExitConfirm.value = true
   tone('warning')
 }
@@ -789,20 +877,23 @@ function requestExit(target = '/') {
 function cancelExit() {
   showExitConfirm.value = false
   pendingExitTarget.value = '/'
+  exitError.value = ''
 }
 
 async function confirmExit() {
   if (!game.value || exiting.value) return
   exiting.value = true
   error.value = ''
+  exitError.value = ''
   try {
     const next = await api.leaveMatch(game.value.id, localPlayerId.value)
     syncGame(next)
-    localStorage.setItem('fieldrealm-match-ban-until', String(Date.now() + 30_000))
+    if (exitPenaltyApplies.value) localStorage.setItem('fieldrealm-match-ban-until', String(Date.now() + 30_000))
     allowRouteLeave.value = true
     showExitConfirm.value = false
     await router.push(pendingExitTarget.value || '/')
   } catch (e) {
+    exitError.value = e.message
     notify(e.message)
   } finally {
     exiting.value = false
@@ -852,7 +943,8 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         <div
           ref="battlefieldViewport"
           class="battlefield-viewport"
-          :class="{ 'is-panning': boardPanning, 'is-settling': boardSettling }"
+          :class="{ 'is-panning': boardPanning, 'is-settling': boardSettling, 'is-gliding': boardGliding }"
+          :style="boardFeedbackStyle"
           role="region"
           tabindex="0"
           aria-label="九域战场视野。手机可上下左右拖动，滚轮或双指可缩放，按 0 重置视野。"
@@ -930,7 +1022,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
 
       <transition name="drawer"><aside v-if="showLog" class="battle-log"><header><div><span>战局记录</span><b>第 {{ game.round }} 回合</b></div><button @click="showLog = false"><X/></button></header><ol><li v-for="(line, i) in game.log" :key="i"><i></i><span>{{ line }}</span></li></ol></aside></transition>
 
-      <transition name="fade"><div v-if="showExitConfirm" class="exit-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title"><div class="exit-confirm-card"><span class="exit-warning-icon"><LogOut/></span><small>LEAVE MATCH</small><h2 id="exit-confirm-title">确认退出当前对局？</h2><p>退出后对手将直接获胜，你将在 <strong>30 秒</strong> 内无法创建、加入或匹配新对局。</p><div><button class="secondary-button" :disabled="exiting" @click="cancelExit">继续对局</button><button class="danger-button" :disabled="exiting" @click="confirmExit">{{ exiting ? '正在退出…' : '确认退出' }}</button></div></div></div></transition>
+      <transition name="fade"><div v-if="showExitConfirm" class="exit-confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="exit-confirm-title"><div class="exit-confirm-card"><span class="exit-warning-icon"><LogOut/></span><small>LEAVE MATCH</small><h2 id="exit-confirm-title">确认退出当前对局？</h2><p v-if="exitPenaltyApplies">退出后对手将直接获胜，你将在 <strong>30 秒</strong> 内无法创建、加入或匹配新对局。</p><p v-else>退出后本局人机试炼将立即结束，<strong>不会触发 30 秒禁赛</strong>。</p><p v-if="exitError" class="exit-confirm-error" role="alert">{{ exitError }}</p><div><button class="secondary-button" :disabled="exiting" @click="cancelExit">继续对局</button><button class="danger-button" :disabled="exiting" @click="confirmExit">{{ exiting ? '正在退出…' : '确认退出' }}</button></div></div></div></transition>
 
       <transition name="draw-reveal">
         <div v-if="drawReveal" class="draw-overlay">

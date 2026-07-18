@@ -295,8 +295,12 @@ public class GameService {
         PlayerState winner = game.getPlayers().stream().filter(player -> !player.getId().equals(leaver.getId())).findFirst().orElseThrow();
         finish(game, winner.getId(), "对手退出");
         game.setStatusText(leaver.getName() + " 退出了对局，" + winner.getName() + " 获得胜利");
-        log(game, leaver.getName() + " 确认退出·将进入 30 秒匹配冷却");
-        if (auth != null && leaver.getAccountId() != null) auth.applyMatchBan(leaver.getAccountId(), 30);
+        if ("PVP".equals(game.getMode())) {
+            log(game, leaver.getName() + " 确认退出·将进入 30 秒匹配冷却");
+            if (auth != null && leaver.getAccountId() != null) auth.applyMatchBan(leaver.getAccountId(), 30);
+        } else {
+            log(game, leaver.getName() + " 结束了人机试炼");
+        }
         publish(game);
         return game;
     }
