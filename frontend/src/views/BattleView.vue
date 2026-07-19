@@ -19,7 +19,13 @@ const busy = ref(false)
 const error = ref('')
 const selectedCard = ref(null)
 const selectedUnit = ref(null)
+const moveModeUnit = ref(null)
 const forcedDiscarding = ref(false)
+const cycleMode = ref(false)
+const tutorialDismissedStep = ref('')
+const tutorialVisible = ref(true)
+const tutorialPageIndex = ref(0)
+const tutorialAwaiting = ref('')
 const showLog = ref(false)
 const soundOn = ref(true)
 const pulse = ref('')
@@ -104,8 +110,22 @@ const boardFeedbackStyle = computed(() => ({ '--drag-glow-x': `${50 - boardFeedb
 const boardZoomLabel = computed(() => `${Math.round(boardZoom.value * 100)}%`)
 const maxRounds = computed(() => Math.max(3, Number(game.value?.boardSize || 3) * 3))
 const roundProgress = computed(() => Math.min(100, ((Number(game.value?.turnNumber || 1) / (maxRounds.value * 2)) * 100)))
+const dominationTarget = computed(() => game.value?.dominationTarget || Math.floor((game.value?.sites?.length || 9) / 2) + 1)
+const playerKillProgress = computed(() => player.value?.stableTicks || 0)
+const rivalKillProgress = computed(() => rival.value?.stableTicks || 0)
+const countControl = id => game.value?.sites?.filter(site => site.ownerId === id).length || 0
+const killThreat = computed(() => {
+  if (playerKillProgress.value >= 1 && countControl(localPlayerId.value) >= dominationTarget.value) {
+    return `⚠ 你方绝杀 ${playerKillProgress.value}/2：再结算一次将获胜`
+  }
+  if (rivalKillProgress.value >= 1 && countControl(rivalPlayerId.value) >= dominationTarget.value) {
+    return `⚠ 对手绝杀 ${rivalKillProgress.value}/2：必须打断其控场`
+  }
+  return ''
+})
 const targetMode = computed(() => {
-  if (forcedDiscarding.value) return ''
+  if (forcedDiscarding.value || cycleMode.value) return ''
+  if (moveModeUnit.value) return 'site'
   if (selectedCard.value) {
     if (['SITE', 'UNIT'].includes(selectedCard.value.type)) return 'site'
     if (['SEAL', 'SURGE', 'REINFORCE', 'RANGE', 'REFRESH'].includes(selectedCard.value.effectCode)) return 'unit'
@@ -116,16 +136,25 @@ const targetMode = computed(() => {
 const targetUnitOwner = computed(() => selectedCard.value?.effectCode === 'SEAL' ? rivalPlayerId.value : targetMode.value === 'unit' ? localPlayerId.value : '')
 const instruction = computed(() => {
   if (!game.value) return ''
-  if (game.value.waitingForOpponent) return `\u623f\u95f4\u53f7 ${game.value.id} \u00b7 \u7b49\u5f85\u53e6\u4e00\u4f4d\u73a9\u5bb6\u52a0\u5165`
+  if (game.value.waitingForOpponent) return `房间号 ${game.value.id} · 等待另一位玩家加入`
   if (game.value.phase === 'FINISHED') return game.value.statusText
-  if (!humanTurn.value) return initialDeployment.value ? '对手正在完成初始布阵，完成后才会开启争夺' : '雾隐执棋者正在推演局势…'
-  if (forcedDiscarding.value) return `\u56de\u5408\u7ed3\u675f\uff1a\u8bf7\u4ece\u624b\u724c\u4e2d\u5f03\u7f6e ${handOverflow.value} \u5f20\u724c`
+  if (!humanTurn.value) return initialDeployment.value ? '对手正在完成初始布阵，完成后才会开启争夺' : `${rival.value?.name || '对手'}正在推演局势…`
+  if (forcedDiscarding.value) return `回合结束：请从手牌中弃置 ${handOverflow.value} 张牌`
+  if (cycleMode.value) return '筛牌：选择一张手牌弃掉并抽1张（每回合限1次）'
+  if (moveModeUnit.value) return `调防「${moveModeUnit.value.name}」：点击相邻己方场地（耗1灵力）`
   if (initialDeployment.value && bothInitialSitesReady.value) return '双方场地已就位，先手骰将决定第一次争夺顺序'
+  if (killThreat.value) return killThreat.value
+  if (game.value.finalRound && game.value.phase === 'DEPLOY') return '终局回合：不可新部署场地，可调防、术式后进入争夺'
   if (selectedCard.value) {
-    if (selectedCard.value.cost > player.value.energy) return '灵力不足：可在右侧弃置这张牌'
-    return targetMode.value === 'unit' ? '请选择可用的目标单位' : '请选择高亮的目标场地'
+    if (selectedCard.value.cost > player.value.energy && !(selectedCard.value.type === 'SPELL' && selectedCard.value.cost === 1 && (player.value.momentum || 0) >= 3)) {
+      return '灵力不足：可弃置这张牌，或积满气势免费打1费术式'
+    }
+    return targetMode.value === 'unit' ? '请选择可用的目标单位' : '请选择高亮的目标场地（己方场地可覆盖改造）'
   }
-  if (selectedUnit.value) return `当前射程 ${selectedUnit.value.attackRange || 1}：只能争夺金色高亮场地`
+  if (selectedUnit.value) {
+    if (selectedUnit.value.shaken) return '该单位动摇中，本回合不可进攻'
+    return `当前射程 ${selectedUnit.value.attackRange || 1}：金色高亮为可争夺目标`
+  }
   if (initialDeployment.value) return playerReady.value ? '你的场地已就位，点击「完成部署」让对手布阵' : '先从手牌部署至少一张场地卡'
   return game.value.statusText
 })
@@ -712,6 +741,8 @@ function suppressBoardClick(event) {
 function clearSelection() {
   selectedCard.value = null
   selectedUnit.value = null
+  moveModeUnit.value = null
+  cycleMode.value = false
 }
 
 function handCardStyle(card, index, total) {
@@ -780,10 +811,32 @@ function canAttackSite(site) {
 }
 
 function isSiteTargetable(site) {
+  if (moveModeUnit.value) {
+    if (game.value.phase !== 'DEPLOY' || site.ownerId !== localPlayerId.value) return false
+    const from = sourceSite(moveModeUnit.value.instanceId)
+    if (!from || from.index === site.index) return false
+    return distanceBetween(from, site) === 1 && site.units.length < 2
+  }
   if (selectedUnit.value) return game.value.phase === 'CONTEST' && canAttackSite(site)
-  if (selectedCard.value?.type === 'SITE') return game.value.phase === 'DEPLOY' && (!site.ownerId || site.ownerId === localPlayerId.value)
+  if (selectedCard.value?.type === 'SITE') {
+    if (game.value.finalRound) return false
+    return game.value.phase === 'DEPLOY' && (!site.ownerId || site.ownerId === localPlayerId.value)
+  }
   if (selectedCard.value?.type === 'UNIT') return game.value.phase === 'DEPLOY' && site.ownerId === localPlayerId.value && site.units.length < 2
   return false
+}
+
+function distanceBetween(a, b) {
+  if (!a || !b) return 99
+  if (a.core || b.core) return a.index === b.index ? 0 : 1
+  return Math.abs((a.row ?? 0) - (b.row ?? 0)) + Math.abs((a.column ?? 0) - (b.column ?? 0))
+}
+
+function rangeLineSites() {
+  if (!selectedUnit.value) return []
+  const source = sourceSite(selectedUnit.value.instanceId)
+  if (!source) return []
+  return (game.value?.sites || []).filter(site => canAttackSite(site)).map(site => site.index)
 }
 
 function isSiteOutOfRange(site) {
@@ -797,20 +850,29 @@ function isSourceSite(site) {
 async function selectSite(site) {
   if (forcedDiscarding.value) return
   if (!humanTurn.value || busy.value || drawReveal.value || phaseFx.value || combatFx.value || initiativeFx.value || (initialDeployment.value && bothInitialSitesReady.value)) return
+  if (moveModeUnit.value) {
+    if (!isSiteTargetable(site)) return notify('只能调防到相邻且有空位的己方场地')
+    await act(() => api.moveUnit(game.value.id, localPlayerId.value, moveModeUnit.value.instanceId, site.index), `调防至「${site.name}」`)
+    moveModeUnit.value = null
+    return
+  }
   if (selectedCard.value && targetMode.value === 'site') {
-    if (selectedCard.value.cost > player.value.energy) return notify('灵力不足，请改选或弃置这张牌')
+    const freeSpell = selectedCard.value.type === 'SPELL' && selectedCard.value.cost === 1 && (player.value.momentum || 0) >= 3
+    if (selectedCard.value.cost > player.value.energy && !freeSpell) return notify('灵力不足：需要更多灵力，或弃置该牌')
     if (!isSiteTargetable(site)) {
-      if (selectedCard.value.type === 'UNIT') return notify(site.ownerId !== localPlayerId.value ? '单位只能部署到己方场地' : '该场地已驻扎2个单位，可先撤离一个')
-      return notify('不能直接覆盖敌方场地')
+      if (selectedCard.value.type === 'UNIT') return notify(site.ownerId !== localPlayerId.value ? '单位只能部署到己方场地' : '该场地已驻扎2个单位，可先撤离或调防')
+      if (game.value.finalRound) return notify('终局回合不可新部署场地')
+      return notify(site.ownerId && site.ownerId !== localPlayerId.value ? '不能直接覆盖敌方场地，请先争夺' : '该场地不可作为目标')
     }
     return play(selectedCard.value, { targetSiteIndex: site.index })
   }
   if (selectedUnit.value && game.value.phase === 'CONTEST') {
     if (!site.ownerId) return notify('无主场地需要用场地卡部署')
     if (site.ownerId === localPlayerId.value) return notify('请选择敌方场地')
+    if (selectedUnit.value.shaken) return notify('该单位处于动摇，本回合不可主动进攻')
     if (!canAttackSite(site)) {
       const distance = distanceForSite(site)
-      return notify(`目标距离为 ${distance}，该单位射程只有 ${selectedUnit.value.attackRange || 1}`)
+      return notify(`超出射程：目标距离 ${distance}，单位射程 ${selectedUnit.value.attackRange || 1}`)
     }
     await resolveAttack(site)
   }
@@ -820,15 +882,31 @@ function selectUnit(unit) {
   if (forcedDiscarding.value) return
   if (!humanTurn.value || busy.value || drawReveal.value || phaseFx.value || combatFx.value) return
   if (selectedCard.value && targetMode.value === 'unit') {
-    if (selectedCard.value.cost > player.value.energy) return notify('灵力不足，请改选或弃置这张牌')
+    const freeSpell = selectedCard.value.cost === 1 && (player.value.momentum || 0) >= 3
+    if (selectedCard.value.cost > player.value.energy && !freeSpell) return notify('灵力不足')
     if (unit.ownerId !== targetUnitOwner.value) return notify(targetUnitOwner.value === localPlayerId.value ? '请选择己方单位' : '请选择敌方单位')
     return play(selectedCard.value, { targetUnitId: unit.instanceId })
   }
-  if (game.value.phase !== 'CONTEST') return notify('部署阶段可点单位右上角撤离；进入争夺后才能选为攻击者')
+  if (game.value.phase === 'DEPLOY' && unit.ownerId === localPlayerId.value) {
+    // 双击思路：再点同一单位进入调防
+    if (moveModeUnit.value?.instanceId === unit.instanceId) {
+      moveModeUnit.value = null
+      return
+    }
+    moveModeUnit.value = unit
+    selectedUnit.value = null
+    selectedCard.value = null
+    tone('select')
+    return notify('已选调防单位：点击相邻己方场地（1灵力），Esc 取消')
+  }
+  if (game.value.phase !== 'CONTEST') return notify('部署阶段：点己方单位可调防；右上角可撤离')
   if (unit.ownerId !== localPlayerId.value) return notify('只能选择己方单位发起争夺')
-  if (unit.exhausted || unit.sealed) return notify(unit.sealed ? '该单位正被封印' : '该单位本回合已行动')
+  if (unit.exhausted || unit.sealed || unit.shaken) {
+    return notify(unit.sealed ? '该单位正被封印' : unit.shaken ? '该单位动摇中，不可进攻' : '该单位本回合已行动')
+  }
   selectedUnit.value = selectedUnit.value?.instanceId === unit.instanceId ? null : unit
   selectedCard.value = null
+  moveModeUnit.value = null
   tone('select')
 }
 
@@ -917,14 +995,29 @@ async function retreatUnit(unit) {
 
 async function discard(card) {
   if (!humanTurn.value || busy.value) return
+  if (cycleMode.value) {
+    await act(() => api.cycleCard(game.value.id, localPlayerId.value, card.id), `筛牌「${card.name}」`)
+    cycleMode.value = false
+    clearSelection()
+    return
+  }
   const allowed = game.value.phase === 'DEPLOY' || (game.value.phase === 'CONTEST' && forcedDiscarding.value)
   if (!allowed) return
-  await act(() => api.discard(game.value.id, localPlayerId.value, card.id), `\u5f03\u7f6e\u300c${card.name}\u300d`)
+  await act(() => api.discard(game.value.id, localPlayerId.value, card.id), `弃置「${card.name}」`)
   clearSelection()
   if (forcedDiscarding.value && handOverflow.value === 0) {
     forcedDiscarding.value = false
     await finishEndTurn()
   }
+}
+
+function toggleCycleMode() {
+  if (!humanTurn.value || player.value?.cycleUsedThisTurn) return notify(player.value?.cycleUsedThisTurn ? '本回合已筛牌' : '无法筛牌')
+  cycleMode.value = !cycleMode.value
+  selectedCard.value = null
+  selectedUnit.value = null
+  moveModeUnit.value = null
+  if (cycleMode.value) tone('select')
 }
 
 async function discardSelected() {
@@ -1198,6 +1291,303 @@ async function rematch() {
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
 const controlled = id => game.value?.sites.filter(site => site.ownerId === id).length || 0
+/** 详细教程课程：先讲解，再穿插实操关卡 */
+const tutorialCurriculum = [
+  {
+    id: 'welcome',
+    chapter: '序章',
+    title: '欢迎来到场地弈境',
+    body: '我是雾隐教习。这不是互相砍血的卡牌——这里没有生命值，也没有击杀单位。你要争夺的是「场地归属」与「积分主动权」。',
+    bullets: [
+      '胜利方式一：控制过半场地，并连续两个结算阶段都保持，触发「场地绝杀」',
+      '胜利方式二：打到规定回合结束，比谁的累计积分更高',
+      '本教程约 8～10 分钟：我会先讲清界面，再带你亲手走完一局核心循环'
+    ],
+    tip: '建议：先读完讲解，再点「继续」；实操时我会暂时收起对话框。',
+    practice: false
+  },
+  {
+    id: 'board',
+    chapter: '界面',
+    title: '棋盘：九域与天元核心',
+    body: '默认 3×3 共九格。中央是「天元核心」，积分权重 ×2，是兵家必争。四角多为「边陲」：部署更便宜，但该格积分计为 0。',
+    bullets: [
+      '绿边/己：你控制的场地',
+      '红边/敌：对手控制的场地',
+      '无主：需要用地场卡部署占领（不能直接攻击占领）',
+      '相邻己方场地会触发「邻接协同」：守力与结算分更有优势'
+    ],
+    tip: '把棋盘想成连在一起的地盘，而不是九个独立格子。',
+    practice: false
+  },
+  {
+    id: 'hud',
+    chapter: '界面',
+    title: '读懂顶部与双方信息条',
+    body: '顶部显示回合进度与当前阶段倒计时。上方是对手，下方是你。积分、控制格数、绝杀进度、气势都在这里。',
+    bullets: [
+      '积分：结算时由控制的场地提供，核心 ×2',
+      '控制 x/9：你占了几块场地（绝杀需要过半，3×3 为 5 块）',
+      '绝杀 0/2：连续结算达标次数；掉到不足过半会重置',
+      '金色菱形气势：争夺成败会增减，满 3 可免费打 1 费术式',
+      '✦ 灵力点：本回合可花的资源，不跨回合保留'
+    ],
+    tip: '人机教程时限较宽，不用慌，先看懂再动手。',
+    practice: false
+  },
+  {
+    id: 'cards',
+    chapter: '卡牌',
+    title: '四种卡牌各司其职',
+    body: '底部手牌是你的行动库。点选卡牌后，棋盘上可点的目标会高亮。',
+    bullets: [
+      '◇ 场地卡：占领/改造格子，提供基础守力与积分',
+      '✦ 单位卡：驻扎到己方场地，用战力进攻、用守力防守',
+      '⌁ 术式：立即生效（抽牌、增幅、封印、加射程等）',
+      '✺ 秘策：条件苛刻、威力大，每局限一次',
+      '费用在左上角金圈；灵力不够会发灰，可弃牌或等下回合'
+    ],
+    tip: '桌面右键 / 手机双击卡牌可看详细效果。',
+    practice: false
+  },
+  {
+    id: 'turn_flow',
+    chapter: '流程',
+    title: '一个回合怎么走',
+    body: '标准节奏是：抽牌与灵力刷新 → 部署阶段 → 争夺阶段 → 结算积分与绝杀进度 → 换手。',
+    bullets: [
+      '部署阶段：打牌、驻军、调防（1 灵力挪单位）、筛牌（弃1抽1）',
+      '争夺阶段：用未行动单位攻击射程内的敌方场地',
+      '战力 > 守力：夺取归属；壁垒场地通常要连续成功两次',
+      '终局回合不能新放场地，只能术式、调防与争夺'
+    ],
+    tip: '快捷键：C 进入争夺/完成初始部署，E 结束回合，Esc 取消选择。',
+    practice: false
+  },
+  {
+    id: 'practice_site',
+    chapter: '实操 1/4',
+    title: '现在：部署你的第一块场地',
+    body: '请完成一次「选场地卡 → 点无主格」。手牌里有「苍翠庭院」（费用 1），点它，再点棋盘任意无主格。',
+    bullets: [
+      '正确顺序：先点手牌，再点场地（不要反过来）',
+      '不要点已经有主的敌方格——场地卡不能直接覆盖敌人',
+      '边陲格（四角）费用可能 -1，但积分按 0 算',
+      '成功后，该格会变成你的颜色，并显示场地名称与守力'
+    ],
+    tip: '操作指引：点下方手牌「苍翠庭院」→ 点棋盘空地。',
+    practice: true,
+    waitFor: 'deploy_unit',
+    highlight: 'hand-site'
+  },
+  {
+    id: 'practice_unit',
+    chapter: '实操 2/4',
+    title: '现在：驻扎一名单位',
+    body: '场地站稳后，把单位放上去。点选手牌「星幕哨卫」（单位），再点你刚刚占领的己方场地。',
+    bullets: [
+      '单位只能放在己方场地上',
+      '每个场地最多 2 个单位',
+      '战力用于进攻，守力加到场地总守力',
+      '单位不会被消灭；但所在场被夺时会「动摇」'
+    ],
+    tip: '若点错卡：再点一次取消，或按 Esc。',
+    practice: true,
+    waitFor: 'ready_contest',
+    highlight: 'hand-unit'
+  },
+  {
+    id: 'practice_ready',
+    chapter: '实操 3/4',
+    title: '现在：完成初始部署',
+    body: '初始阶段双方都要先落下至少一块场地。你已完成，请点击右侧「完成部署」（或按 C），让我也布置场地，然后摇先手骰。',
+    bullets: [
+      '完成部署后，轮到教习（AI）自动落子',
+      '双方都有场地后会摇骰决定谁先争夺',
+      '先手骰只决定顺序，不直接决定胜负',
+      '之后才会进入真正的「争夺阶段」'
+    ],
+    tip: '看右下/右侧绿色按钮：「完成部署」。',
+    practice: true,
+    waitFor: 'contest',
+    highlight: 'phase-button'
+  },
+  {
+    id: 'contest_rules',
+    chapter: '争夺',
+    title: '争夺怎么算赢',
+    body: '争夺阶段：先点己方单位，再点金色高亮的敌方场地。只有「战力 > 总守力」才会易主。',
+    bullets: [
+      '总守力 = 场地基础守力 + 驻军守力 + 邻接等加成',
+      '射程不够的目标会变暗，并提示「超出射程」',
+      '夹击：目标被你 ≥2 块相邻场地夹住时，战力 +1',
+      '压倒性（战力高出 3 点及以上）额外 +1 分',
+      '单位本回合行动后会显示「已行动」，不能再攻'
+    ],
+    tip: '金色虚线/高亮 = 你当前可以打的合法目标。',
+    practice: false
+  },
+  {
+    id: 'practice_attack',
+    chapter: '实操 4/4',
+    title: '现在：发起一次争夺',
+    body: '轮到你争夺时：点你的单位，再点敌方被高亮的场地。尽量选择守力较低、或你够得着的目标。',
+    bullets: [
+      '若提示动摇/已行动/封印：换一个单位',
+      '若提示超出射程：换更近的目标，或下回用加射程术式',
+      '成功后场地颜色会变成你的，绝杀与积分局面都会变化',
+      '失败也不要紧：你会理解守力与气势的反馈'
+    ],
+    tip: '点单位 → 点金色敌方场地。完成后我会为你总结。',
+    practice: true,
+    waitFor: 'done',
+    highlight: 'board'
+  },
+  {
+    id: 'win_more',
+    chapter: '进阶',
+    title: '绝杀、积分与中盘技巧',
+    body: '打完第一轮争夺后，你已经会核心操作。真正的对局还要管理这两条胜利线。',
+    bullets: [
+      '绝杀：控制 ≥5 格（3×3）并连续两个结算；HUD 上「绝杀 1/2」很危险',
+      '被打断：控制掉到不足过半，进度清零',
+      '积分运营：核心、邻接协同、场地常驻分、压倒性争夺',
+      '调防：部署阶段花 1 灵力把单位挪到相邻己方场补洞',
+      '筛牌：每回合可弃 1 抽 1；弃场地/单位还有额外小收益'
+    ],
+    tip: '标准局还有困难 AI、主题卡组，建议教程后再试「秘境试炼」。',
+    practice: false
+  },
+  {
+    id: 'status_guide',
+    chapter: '进阶',
+    title: '单位状态怎么看',
+    body: '单位条右侧是战/守/射，名字旁的小色块是状态。悬停可看说明。',
+    bullets: [
+      '封：被封印，无法行动',
+      '摇：动摇，守力降低且本回合不能进攻',
+      '动：本回合已争夺',
+      '新：刚部署的新驻标记',
+      '根：扎根，连驻后守力 +1',
+      '战+/射+：被术式等增幅过'
+    ],
+    tip: '状态是读局关键，比卡面光效更重要。',
+    practice: false
+  },
+  {
+    id: 'done',
+    chapter: '结业',
+    title: '教程完成，去掌控主动权',
+    body: '你已经学会：部署场地、驻扎单位、完成布阵、按射程争夺，并理解了双胜利与状态。可以继续打完本局，或回大厅开标准对战。',
+    bullets: [
+      '忘记规则时：点右上角「规则」，或随时点「打开教程」回顾',
+      '推荐下一局：3×3 + 标准难度 + 均衡卡组',
+      '想练翻盘：试试「壁垒龟缩」或「游猎射程」主题组',
+      '残局「核心突破」可专门练算射程与战力'
+    ],
+    tip: '雾海纪元见——愿你每一次落子，都改写归属。',
+    practice: false
+  }
+]
+
+const isTutorial = computed(() => game.value?.scenario === 'tutorial')
+const tutorialCard = computed(() => {
+  if (!isTutorial.value) return null
+  const page = tutorialCurriculum[tutorialPageIndex.value] || tutorialCurriculum[0]
+  return {
+    ...page,
+    step: tutorialPageIndex.value + 1,
+    total: tutorialCurriculum.length
+  }
+})
+const tutorialPracticeTip = computed(() => {
+  if (!isTutorial.value || tutorialVisible.value) return ''
+  const page = tutorialCurriculum[tutorialPageIndex.value]
+  if (page?.practice && tutorialAwaiting.value) return page.tip || page.body
+  return ''
+})
+const showTutorialCoach = computed(() => {
+  if (!isTutorial.value || !tutorialCard.value) return false
+  if (!tutorialVisible.value) return false
+  if (tutorialAwaiting.value) return false
+  return true
+})
+
+watch(() => game.value?.scenario, (s) => {
+  if (s === 'tutorial') {
+    tutorialPageIndex.value = 0
+    tutorialVisible.value = true
+    tutorialAwaiting.value = ''
+    tutorialDismissedStep.value = ''
+  }
+}, { immediate: true })
+
+watch(() => game.value?.tutorialStep, (step, prev) => {
+  if (!isTutorial.value || !step || step === prev) return
+  // 实操完成：后端步骤推进后，打开下一课
+  if (tutorialAwaiting.value && step === tutorialAwaiting.value) {
+    tutorialAwaiting.value = ''
+    tutorialPageIndex.value = Math.min(tutorialPageIndex.value + 1, tutorialCurriculum.length - 1)
+    tutorialVisible.value = true
+    return
+  }
+  // 同步跳到与后端步骤对应的实操页（防止不同步）
+  const map = { deploy_site: 'practice_site', deploy_unit: 'practice_unit', ready_contest: 'practice_ready', contest: 'practice_attack', done: 'done' }
+  const id = map[step]
+  if (id && !tutorialAwaiting.value) {
+    const idx = tutorialCurriculum.findIndex(p => p.id === id)
+    if (idx >= 0 && idx > tutorialPageIndex.value) {
+      tutorialPageIndex.value = idx
+      tutorialVisible.value = true
+    }
+  }
+})
+
+function dismissTutorial() {
+  const page = tutorialCurriculum[tutorialPageIndex.value]
+  if (page?.practice) {
+    tutorialAwaiting.value = page.waitFor || ''
+    tutorialVisible.value = false
+    return
+  }
+  tutorialVisible.value = false
+  tutorialDismissedStep.value = page?.id || ''
+}
+
+function advanceTutorialPage() {
+  const page = tutorialCurriculum[tutorialPageIndex.value]
+  if (page?.practice) {
+    dismissTutorial()
+    return
+  }
+  if (tutorialPageIndex.value >= tutorialCurriculum.length - 1) {
+    tutorialVisible.value = false
+    return
+  }
+  tutorialPageIndex.value += 1
+  tutorialVisible.value = true
+  // 若下一页是实操且后端已超过该关，自动跳过等待
+  const next = tutorialCurriculum[tutorialPageIndex.value]
+  if (next?.practice && game.value?.tutorialStep === next.waitFor) {
+    tutorialPageIndex.value = Math.min(tutorialPageIndex.value + 1, tutorialCurriculum.length - 1)
+  }
+}
+
+function reopenTutorial() {
+  tutorialAwaiting.value = ''
+  tutorialVisible.value = true
+}
+
+function siteSvgX(site) {
+  if (!site) return 50
+  const size = game.value?.boardSize || 3
+  return ((site.column + 0.5) / size) * 100
+}
+function siteSvgY(site) {
+  if (!site) return 50
+  const size = game.value?.boardSize || 3
+  return ((site.row + 0.5) / size) * 100
+}
 </script>
 
 <template>
@@ -1213,12 +1603,22 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
 
       <section class="opponent-strip player-strip rival-strip">
         <div class="combatant"><span class="combatant-avatar rival-avatar">{{ rival.avatar }}</span><div><small>{{ rival.title }}</small><b>{{ rival.name }}</b></div></div>
-        <div class="resource-cluster"><span class="control-count">控制 <b>{{ controlled(rivalPlayerId) }}</b>/{{ game.sites.length }}</span><span class="score-orb rival-score"><small>积分</small><b>{{ rival.score }}</b></span><span class="hand-count"><Hand/>{{ rival.hand.length }}</span></div>
+        <div class="resource-cluster">
+          <span class="dominion-meter" :class="{ hot: rivalKillProgress >= 1 }" title="绝杀进度">绝杀 <b>{{ rivalKillProgress }}</b>/2</span>
+          <span class="control-count">控制 <b>{{ controlled(rivalPlayerId) }}</b>/{{ game.sites.length }}</span>
+          <span class="momentum-pips" title="气势" aria-label="对手气势"><i v-for="n in 3" :key="'rm'+n" :class="{ filled: n <= (rival.momentum || 0) }">◆</i></span>
+          <span class="score-orb rival-score"><small>积分</small><b>{{ rival.score }}</b></span>
+          <span class="hand-count"><Hand/>{{ rival.hand.length }}</span>
+        </div>
       </section>
 
       <main class="battlefield">
         <div class="field-mist mist-a"></div><div class="field-mist mist-b"></div>
-        <div class="battle-lane-label"><span>战场态势</span><b>{{ game.phase === 'CONTEST' ? '目标锁定 · 选择你的攻击路线' : initialDeployment ? '初始布阵 · 双方场地就位后开启争夺' : '部署窗口 · 调整你的阵地' }}</b></div>
+        <div class="battle-lane-label">
+          <span>战场态势</span>
+          <b>{{ game.phase === 'CONTEST' ? '目标锁定 · 选择你的攻击路线' : initialDeployment ? '初始布阵 · 双方场地就位后开启争夺' : '部署窗口 · 调整你的阵地' }}</b>
+          <em v-if="killThreat" class="kill-threat">{{ killThreat }}</em>
+        </div>
         <div v-if="initialDeployment" class="deployment-readiness" aria-label="双方初始场地部署状态">
           <span :class="{ ready: playerReady }"><CheckCircle2/>你方{{ playerReady ? '已就位' : '未布置' }}</span>
           <i></i>
@@ -1248,14 +1648,16 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
                 :style="{ gridRow: site.row + 1, gridColumn: site.column + 1 }"
                 :site="site"
                 :players="game.players"
+                :local-player-id="localPlayerId"
                 :active-player="active.id"
-                :selected-unit-id="selectedUnit?.instanceId"
+                :selected-unit-id="selectedUnit?.instanceId || moveModeUnit?.instanceId"
                 :target-mode="targetMode"
                 :targetable="isSiteTargetable(site)"
+                :in-range-line="rangeLineSites().includes(site.index)"
                 :target-unit-owner="targetUnitOwner"
                 :distance="distanceForSite(site)"
                 :out-of-range="isSiteOutOfRange(site)"
-                :source="isSourceSite(site)"
+                :source="isSourceSite(site) || (moveModeUnit && sourceSite(moveModeUnit.instanceId)?.index === site.index)"
                 :impacting="sitePulseIndex === site.index"
                 :can-retreat="humanTurn && game.phase === 'DEPLOY'"
                 @select-site="selectSite"
@@ -1267,6 +1669,17 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
                 <line x1="50" y1="50" x2="16.7" y2="16.7" /><line x1="50" y1="50" x2="50" y2="16.7" /><line x1="50" y1="50" x2="83.3" y2="16.7" />
                 <line x1="50" y1="50" x2="83.3" y2="50" /><line x1="50" y1="50" x2="83.3" y2="83.3" /><line x1="50" y1="50" x2="50" y2="83.3" />
                 <line x1="50" y1="50" x2="16.7" y2="83.3" /><line x1="50" y1="50" x2="16.7" y2="50" />
+                <template v-if="selectedUnit && sourceSite(selectedUnit.instanceId)">
+                  <line
+                    v-for="idx in rangeLineSites()"
+                    :key="'rl'+idx"
+                    class="range-pulse-line"
+                    :x1="siteSvgX(sourceSite(selectedUnit.instanceId))"
+                    :y1="siteSvgY(sourceSite(selectedUnit.instanceId))"
+                    :x2="siteSvgX(game.sites.find(s => s.index === idx))"
+                    :y2="siteSvgY(game.sites.find(s => s.index === idx))"
+                  />
+                </template>
               </svg>
             </div>
           </div>
@@ -1279,6 +1692,15 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
           <button type="button" title="重置视野（0）" aria-label="重置战场视野" @click="resetBoardView"><LocateFixed/></button>
         </div>
         <div class="battle-flow-hint"><span class="hint-dot"></span><span v-if="game.phase === 'DEPLOY'">{{ initialDeployment ? '先部署己方场地，再完成部署等待对手场地显现' : '从下方手牌开始：选卡后，点击场地放下它' }}</span><span v-else>金色高亮为射程内目标；中央天元与八个外域均相邻</span></div>
+        <div v-if="tutorialPracticeTip" class="tutorial-practice-bar" role="status">
+          <img src="/teacher.png" alt="" class="tutorial-practice-avatar" />
+          <div>
+            <b>实操中 · {{ tutorialCard?.chapter }}</b>
+            <p>{{ tutorialPracticeTip }}</p>
+          </div>
+          <button type="button" class="secondary-button" @click="reopenTutorial">重看说明</button>
+        </div>
+        <button v-if="isTutorial && !showTutorialCoach && !tutorialPracticeTip" type="button" class="tutorial-reopen" @click="reopenTutorial">打开教程</button>
         <transition name="impact"><div v-if="pulse" class="impact-banner"><Sparkles/>{{ pulse }}</div></transition>
         <transition name="fade"><div v-if="error" class="battle-toast"><X :size="16"/>{{ error }}</div></transition>
         <transition name="impact"><div v-if="aiFx" class="ai-action-banner" :class="`ai-${aiFx.kind}`"><span class="ai-action-icon"><Swords v-if="aiFx.kind === 'attack'"/><Sparkles v-else/></span><div><small>OPPONENT ACTION</small><b>{{ rival?.name || '\u5bf9\u624b' }} &#183; {{ aiFx.title || '\u5bf9\u624b\u884c\u52a8' }}</b><p>{{ aiFx.detail }}</p></div></div></transition>
@@ -1288,7 +1710,13 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
       <section class="player-strip self-strip">
         <div class="combatant"><span class="combatant-avatar">{{ player.avatar }}</span><div><small>{{ player.title }}</small><b>{{ player.name }}</b></div></div>
         <div class="turn-guidance"><span :class="{ active: humanTurn }">{{ humanTurn ? '你的回合' : '等待对手' }}</span><p>{{ instruction }}</p><div class="action-guide"><span v-for="(step, index) in actionSteps" :key="step.label" :class="{ done: step.done, current: index === (selectedCard || selectedUnit ? 1 : 0) }"><i>{{ step.done ? '✓' : index + 1 }}</i>{{ step.label }}</span></div></div>
-        <div class="resource-cluster"><span class="energy-pips" title="本回合灵力"><i v-for="n in (game.boardSize || 3)" :key="n" :class="{ filled: n <= player.energy }">✦</i></span><span class="control-count">控制 <b>{{ controlled(localPlayerId) }}</b>/{{ game.sites.length }}</span><span class="score-orb"><small>积分</small><b>{{ player.score }}</b></span></div>
+        <div class="resource-cluster">
+          <span class="energy-pips" title="本回合灵力"><i v-for="n in (game.boardSize || 3)" :key="n" :class="{ filled: n <= player.energy }">✦</i></span>
+          <span class="momentum-pips" title="气势（满3可免费1费术式）" aria-label="气势"><i v-for="n in 3" :key="'m'+n" :class="{ filled: n <= (player.momentum || 0) }">◆</i></span>
+          <span class="dominion-meter" :class="{ hot: playerKillProgress >= 1 }" title="绝杀进度">绝杀 <b>{{ playerKillProgress }}</b>/2</span>
+          <span class="control-count">控制 <b>{{ controlled(localPlayerId) }}</b>/{{ game.sites.length }}</span>
+          <span class="score-orb"><small>积分</small><b>{{ player.score }}</b></span>
+        </div>
       </section>
 
       <section class="hand-area">
@@ -1310,9 +1738,17 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         </TransitionGroup>
         <div class="turn-actions">
           <button v-if="selectedCard && humanTurn && (game.phase === 'DEPLOY' || forcedDiscarding)" class="discard-selected" :disabled="busy" @click.stop="discardSelected"><Trash2/><span>&#x5f03;&#x7f6e;&#x9009;&#x4e2d;&#x724c;</span></button>
+          <button
+            v-if="humanTurn && !forcedDiscarding"
+            class="discard-selected cycle-btn"
+            type="button"
+            :disabled="busy || player.cycleUsedThisTurn"
+            :class="{ active: cycleMode }"
+            @click="toggleCycleMode"
+          >{{ cycleMode ? '取消筛牌' : '筛牌 弃1抽1' }}</button>
           <button v-if="game.phase === 'DEPLOY' && initialDeployment" class="phase-button ready-deployment" :disabled="!humanTurn || busy || forcedDiscarding || !playerReady" @click="completeInitialDeployment"><CheckCircle2/><span>完成部署</span><small>C</small></button>
           <button v-else-if="game.phase === 'DEPLOY'" class="phase-button" :disabled="!humanTurn || busy" @click="enterContest"><Swords/><span>进入争夺</span><small>C</small></button>
-          <button v-else-if="game.phase === 'CONTEST'" class="phase-button end" :disabled="!humanTurn || busy || forcedDiscarding" @click="endTurn"><ChevronRight/><span>&#x7ed3;&#x675f;&#x56de;&#x5408;</span><small>E</small></button>
+          <button v-else-if="game.phase === 'CONTEST'" class="phase-button end" :disabled="!humanTurn || busy || forcedDiscarding" @click="endTurn"><ChevronRight/><span>结束回合</span><small>E</small></button>
         </div>
       </section>
 
@@ -1373,6 +1809,39 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
             <div class="combat-side defender-side"><span class="combat-site-glyph">◇</span><small>被争夺领域</small><b>{{ combatFx.target.name }}</b><strong>{{ combatFx.defense }} <em>守力</em></strong></div>
           </div>
           <div v-if="combatFx.stage === 'result'" class="combat-result"><Zap :size="17"/><span>{{ combatFx.result }}</span><b>{{ combatFx.captured ? '领域已易手' : '领域仍守住' }}</b></div>
+        </div>
+      </transition>
+
+      <transition name="fade">
+        <div v-if="showTutorialCoach" class="tutorial-coach" role="dialog" aria-modal="true" aria-labelledby="tutorial-title">
+          <div class="tutorial-coach-dim" @click="dismissTutorial"></div>
+          <div class="tutorial-coach-panel">
+            <div class="tutorial-coach-figure">
+              <img class="coach-portrait" src="/teacher.png" alt="雾隐教习" width="280" height="360" decoding="async" />
+              <small>雾隐教习</small>
+            </div>
+            <div class="tutorial-coach-dialog">
+              <header>
+                <span>{{ tutorialCard.chapter }} · {{ tutorialCard.step }}/{{ tutorialCard.total }}</span>
+                <div class="tutorial-step-dots dense">
+                  <i v-for="n in tutorialCard.total" :key="n" :class="{ on: n <= tutorialCard.step, current: n === tutorialCard.step }"></i>
+                </div>
+              </header>
+              <h2 id="tutorial-title">{{ tutorialCard.title }}</h2>
+              <p class="tutorial-body">{{ tutorialCard.body }}</p>
+              <ul v-if="tutorialCard.bullets?.length" class="tutorial-bullets">
+                <li v-for="(line, idx) in tutorialCard.bullets" :key="idx">{{ line }}</li>
+              </ul>
+              <p class="tutorial-tip">{{ tutorialCard.tip }}</p>
+              <footer>
+                <button v-if="tutorialCard.practice" type="button" class="secondary-button" @click="reopenTutorial">再看一遍</button>
+                <button v-else type="button" class="secondary-button" @click="dismissTutorial">稍后再看</button>
+                <button type="button" class="primary-button" @click="advanceTutorialPage">
+                  {{ tutorialCard.id === 'done' ? '开始自由对弈' : tutorialCard.practice ? '我去操作' : '下一页' }}
+                </button>
+              </footer>
+            </div>
+          </div>
         </div>
       </transition>
 

@@ -124,6 +124,7 @@ onBeforeUnmount(() => {
     type="button"
     class="game-card"
     :class="[rarityClass(card.rarity), { compact, selected, disabled, 'details-open': detailsOpen }]"
+    :data-type="card.type"
     :style="{ '--type-color': meta.color }"
     :aria-pressed="selected"
     :aria-disabled="disabled"

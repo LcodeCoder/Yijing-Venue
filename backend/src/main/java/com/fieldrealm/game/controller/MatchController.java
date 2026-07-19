@@ -26,9 +26,14 @@ public class MatchController {
         String name = request == null ? null : request.playerName();
         int boardSize = request == null || request.boardSize() == null ? 3 : request.boardSize();
         boolean ranked = request != null && Boolean.TRUE.equals(request.ranked());
+        String aiDifficulty = request == null ? null : request.aiDifficulty();
+        String scenario = request == null ? null : request.scenario();
+        String deckArchetype = request == null ? null : request.deckArchetype();
+        String puzzleId = request == null ? null : request.puzzleId();
         if (ranked && user == null) throw new IllegalArgumentException("排位赛需要先登录");
         if (user != null && (name == null || name.isBlank())) name = user.getDisplayName();
-        return games.create(mode, name, boardSize, user == null ? null : user.getId(), ranked);
+        return games.create(mode, name, boardSize, user == null ? null : user.getId(), ranked,
+                aiDifficulty, scenario, deckArchetype, puzzleId);
     }
 
     @PostMapping("/{id}/join")
@@ -60,5 +65,11 @@ public class MatchController {
     @PostMapping("/{id}/attacks") public GameState attack(@PathVariable String id, @Valid @RequestBody AttackRequest request) { return games.attack(id, request); }
     @PostMapping("/{id}/end-turn") public GameState endTurn(@PathVariable String id, @Valid @RequestBody PlayerActionRequest request) { return games.endTurn(id, request.playerId()); }
     @PostMapping("/{id}/units/retreat") public GameState retreatUnit(@PathVariable String id, @Valid @RequestBody UnitActionRequest request) { return games.retreatUnit(id, request.playerId(), request.unitId()); }
+    @PostMapping("/{id}/units/move") public GameState moveUnit(@PathVariable String id, @Valid @RequestBody MoveUnitRequest request) {
+        return games.moveUnit(id, request.playerId(), request.unitId(), request.targetSiteIndex());
+    }
+    @PostMapping("/{id}/cycle") public GameState cycle(@PathVariable String id, @Valid @RequestBody Map<String, String> request) {
+        return games.cycleCard(id, request.get("playerId"), request.get("cardId"));
+    }
     @PostMapping("/{id}/discard") public GameState discard(@PathVariable String id, @Valid @RequestBody Map<String, String> request) { return games.discard(id, request.get("playerId"), request.get("cardId")); }
 }

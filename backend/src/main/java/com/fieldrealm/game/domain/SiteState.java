@@ -9,6 +9,8 @@ public class SiteState {
     private int column;
     private String position;
     private boolean core;
+    /** 边陲：部署费用-1，基础积分为0 */
+    private boolean frontier;
     private String ownerId;
     private String cardId;
     private String name;
@@ -18,6 +20,8 @@ public class SiteState {
     private String effect;
     private String pendingAttackerId;
     private int fortressHits;
+    /** 邻接协同提供的额外守力（结算前由引擎写入） */
+    private int adjacencyGuardBonus;
     private List<UnitInstance> units = new ArrayList<>();
 
     public SiteState() { }
@@ -29,13 +33,18 @@ public class SiteState {
     }
 
     public int totalGuard() {
-        int unitGuard = units.stream().filter(u -> !u.isSealed()).mapToInt(UnitInstance::getGuard).sum();
+        int unitGuard = units.stream().filter(u -> !u.isSealed()).mapToInt(UnitInstance::effectiveGuard).sum();
         int weaver = (int) units.stream().filter(u -> !u.isSealed() && "WEAVER".equals(u.getKeyword())).count();
-        int sanctuary = "SANCTUARY".equals(effectCode) ? (int) units.stream().filter(u -> ownerId != null && ownerId.equals(u.getOwnerId())).count() : 0;
-        return baseGuard + unitGuard + weaver + sanctuary;
+        int sanctuary = "SANCTUARY".equals(effectCode)
+                ? (int) units.stream().filter(u -> ownerId != null && ownerId.equals(u.getOwnerId())).count()
+                : 0;
+        return baseGuard + unitGuard + weaver + sanctuary + adjacencyGuardBonus;
     }
 
-    public int scoringValue() { return basePoints * (core ? 2 : 1); }
+    public int scoringValue() {
+        int points = frontier && basePoints > 0 ? 0 : basePoints;
+        return points * (core ? 2 : 1);
+    }
 
     public int getIndex() { return index; }
     public void setIndex(int index) { this.index = index; }
@@ -47,6 +56,8 @@ public class SiteState {
     public void setPosition(String position) { this.position = position; }
     public boolean isCore() { return core; }
     public void setCore(boolean core) { this.core = core; }
+    public boolean isFrontier() { return frontier; }
+    public void setFrontier(boolean frontier) { this.frontier = frontier; }
     public String getOwnerId() { return ownerId; }
     public void setOwnerId(String ownerId) { this.ownerId = ownerId; }
     public String getCardId() { return cardId; }
@@ -65,6 +76,8 @@ public class SiteState {
     public void setPendingAttackerId(String pendingAttackerId) { this.pendingAttackerId = pendingAttackerId; }
     public int getFortressHits() { return fortressHits; }
     public void setFortressHits(int fortressHits) { this.fortressHits = fortressHits; }
+    public int getAdjacencyGuardBonus() { return adjacencyGuardBonus; }
+    public void setAdjacencyGuardBonus(int adjacencyGuardBonus) { this.adjacencyGuardBonus = adjacencyGuardBonus; }
     public List<UnitInstance> getUnits() { return units; }
     public void setUnits(List<UnitInstance> units) { this.units = units; }
 }

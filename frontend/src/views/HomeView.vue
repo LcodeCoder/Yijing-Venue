@@ -1,7 +1,7 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Swords, Sparkles, ShieldCheck, Timer, Map, ChevronRight, Play, Users, Bot, Trophy } from 'lucide-vue-next'
+import { Swords, Sparkles, ShieldCheck, Timer, Map, ChevronRight, Play, Users, Bot, Trophy, GraduationCap, Puzzle, BookOpen } from 'lucide-vue-next'
 import { api } from '../services/api'
 import { useAuthStore } from '../stores/auth'
 
@@ -10,20 +10,30 @@ const auth = useAuthStore()
 const creating = ref(false)
 const error = ref('')
 const boardSize = ref(3)
+const aiDifficulty = ref('normal')
+const deckArchetype = ref('balanced')
 const roomId = ref('')
 const waiting = ref(false)
 const cooldownRemaining = ref(0)
+const archetypes = ref([])
 const boardMotion = reactive({ tiltX: '0deg', tiltY: '0deg', glowX: '50%', glowY: '46%' })
 let poller
 let cooldownTimer
 
-async function start(mode = 'AI') {
+async function start(mode = 'AI', extra = {}) {
   if (typeof mode !== 'string') mode = 'AI'
   if (cooldownRemaining.value > 0) return showCooldownError()
   creating.value = true
   error.value = ''
   try {
-    const match = await api.createMatch('', { mode, boardSize: boardSize.value })
+    const match = await api.createMatch('', {
+      mode,
+      boardSize: extra.boardSize ?? boardSize.value,
+      aiDifficulty: extra.aiDifficulty ?? aiDifficulty.value,
+      scenario: extra.scenario || 'standard',
+      deckArchetype: extra.deckArchetype ?? deckArchetype.value,
+      puzzleId: extra.puzzleId || null
+    })
     localStorage.setItem(`fieldrealm-player-${match.id}`, 'p1')
     router.push(`/battle/${match.id}`)
   } catch (e) {
@@ -98,6 +108,7 @@ function showCooldownError() {
 onMounted(async () => {
   refreshCooldown()
   cooldownTimer = window.setInterval(refreshCooldown, 500)
+  try { archetypes.value = await api.archetypes() } catch { /* optional */ }
   if (auth.isLoggedIn) {
     try {
       const state = await api.matchCooldown()
@@ -137,26 +148,33 @@ onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
       <div class="hero-copy">
         <span class="eyebrow"><Sparkles :size="15" /> 雾海纪元 · 第一赛季</span>
         <h1>胜负不在伤害，<br /><em>而在场地的归属。</em></h1>
-        <p>部署场地、驻扎单位、发动争夺。没有血量与消灭，只有不断改写的局势，以及你对五域主动权的掌控。</p>
+        <p>部署场地、驻扎单位、发动射程争夺。没有血量与消灭，只有不断改写的域面主动权——绝杀或积分，两条胜利之路。</p>
         <div class="hero-actions">
           <button class="primary-button" :disabled="creating || cooldownRemaining > 0" @click="start('AI')"><Play :size="18" fill="currentColor" />{{ creating ? '正在开启弈境…' : '开始人机对弈' }}</button>
-          <router-link to="/rules" class="secondary-button"><Map :size="18" />查看完整规则</router-link>
+          <button class="secondary-button" :disabled="creating || cooldownRemaining > 0" @click="start('AI', { scenario: 'tutorial', boardSize: 3, aiDifficulty: 'easy' })"><GraduationCap :size="18" />完整新手教程</button>
+          <router-link to="/rules" class="secondary-button"><Map :size="18" />完整规则</router-link>
         </div>
         <p v-if="cooldownRemaining" class="cooldown-notice"><Timer :size="16"/>退出惩罚中 · {{ cooldownRemaining }} 秒后可开始新对局</p>
         <p v-if="error" class="inline-error">{{ error }}</p>
         <div class="hero-stats">
-          <span><b>5</b><small>固定场地</small></span><span><b>3</b><small>每回合灵力</small></span><span><b>8</b><small>完整回合</small></span><span><b>2</b><small>胜利路线</small></span>
+          <span><b>3×3～5×5</b><small>可变域面</small></span>
+          <span><b>=边长</b><small>每回合灵力</small></span>
+          <span><b>×3</b><small>总回合数</small></span>
+          <span><b>2</b><small>胜利路线</small></span>
         </div>
       </div>
       <div
         class="hero-board"
         :style="{ '--tilt-x': boardMotion.tiltX, '--tilt-y': boardMotion.tiltY, '--glow-x': boardMotion.glowX, '--glow-y': boardMotion.glowY }"
-        aria-label="五格场地示意图"
+        aria-label="场地示意图"
         @pointermove="moveBoard"
         @pointerleave="resetBoard"
       >
-        <span class="realm-mote mote-a" aria-hidden="true">✦</span><span class="realm-mote mote-b" aria-hidden="true">◇</span><span class="realm-mote mote-c" aria-hidden="true">·</span>
-        <span class="board-orbit orbit-a"></span><span class="board-orbit orbit-b"></span>
+        <span class="realm-mote mote-a" aria-hidden="true">✦</span>
+        <span class="realm-mote mote-b" aria-hidden="true">◇</span>
+        <span class="realm-mote mote-c" aria-hidden="true">·</span>
+        <span class="board-orbit orbit-a"></span>
+        <span class="board-orbit orbit-b"></span>
         <div class="mini-site site-a"><i>◇</i><b>苍翠庭院</b><small>己方</small></div>
         <div class="mini-site site-b enemy"><i>◇</i><b>玄岩壁垒</b><small>敌方</small></div>
         <div class="mini-site site-core"><i>✦</i><b>灵脉核心</b><small>积分 ×2</small></div>
@@ -169,19 +187,84 @@ onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
 
     <section class="feature-strip">
       <div class="section-wrap feature-grid">
-        <article><span><Swords /></span><div><b>无血量策略对抗</b><p>每一次行动都围绕占领、置换与控场展开。</p></div></article>
-        <article><span><ShieldCheck /></span><div><b>双重胜利逻辑</b><p>稳定三场绝杀，或完成对应棋盘的总回合数赢得积分。</p></div></article>
-        <article><span><Timer /></span><div><b>10–15 分钟一局</b><p>灵力不留存，决策紧凑，局势快速反转。</p></div></article>
+        <article><span><Swords /></span><div><b>无血量策略对抗</b><p>邻接协同、夹击与射程，让棋盘几何成为决策核心。</p></div></article>
+        <article><span><ShieldCheck /></span><div><b>双重胜利逻辑</b><p>控制过半场地连结算两次触发绝杀，或终局比拼积分。</p></div></article>
+        <article><span><Timer /></span><div><b>10–15 分钟一局</b><p>人机 90 秒/阶段，排位 60 秒；灵力不留存，节奏紧凑。</p></div></article>
       </div>
     </section>
 
     <section class="section-wrap mode-section">
-      <div class="section-heading"><span>选择你的道路</span><h2>3×3、4×4、5×5 三种弈境</h2><p>所有部署与争夺阶段均限时 60 秒，超时自动推进。</p></div>
-      <div class="board-size-picker"><button v-for="n in [3, 4, 5]" :key="n" :class="{ active: boardSize === n }" @click="boardSize = n">{{ n }}×{{ n }}<small>{{ n === 3 ? '快速' : n === 4 ? '标准' : '史诗' }}</small></button></div>
+      <div class="section-heading">
+        <span>选择你的道路</span>
+        <h2>3×3、4×4、5×5 三种弈境</h2>
+        <p>灵力 = 棋盘边长；总回合 = 边长 × 3。默认推荐 3×3，4×4/5×5 为进阶规格。</p>
+      </div>
+      <div class="board-size-picker">
+        <button v-for="n in [3, 4, 5]" :key="n" :class="{ active: boardSize === n }" @click="boardSize = n">
+          {{ n }}×{{ n }}
+          <small>{{ n === 3 ? '推荐' : n === 4 ? '进阶' : '史诗' }}</small>
+        </button>
+      </div>
+      <div class="home-options-row">
+        <label>AI 难度
+          <select v-model="aiDifficulty">
+            <option value="easy">入门</option>
+            <option value="normal">标准</option>
+            <option value="hard">困难</option>
+          </select>
+        </label>
+        <label>主题卡组
+          <select v-model="deckArchetype">
+            <option value="balanced">均衡初阵</option>
+            <option value="bastion">壁垒龟缩</option>
+            <option value="ranger">游猎射程</option>
+            <option value="forge">锻场突击</option>
+            <option value="draw">运营过牌</option>
+            <option value="dominion">绝杀快控</option>
+          </select>
+        </label>
+      </div>
       <div class="mode-grid expanded">
-        <article class="mode-card featured"><div class="mode-icon"><Bot /></div><span class="mode-tag">单人训练</span><h3>秘境试炼</h3><p>与雾隐执棋者对战，熟悉计时部署、场地连线与卡牌组合。</p><button :disabled="creating || cooldownRemaining > 0" @click="start('AI')">立即挑战 <ChevronRight /></button></article>
-        <article class="mode-card room-mode"><div class="mode-icon"><Users /></div><span class="mode-tag">实时联机</span><h3>好友房间</h3><p>创建房间后把 8 位房间号发给朋友，双方通过 WebSocket 实时同步。</p><div class="room-actions"><button class="create-room-button" :disabled="creating || cooldownRemaining > 0" @click="start('PVP')">创建房间</button><div class="room-join"><input v-model="roomId" maxlength="8" placeholder="输入房间号" /><button :disabled="creating || cooldownRemaining > 0" @click="joinRoom">加入</button></div></div></article>
-        <article class="mode-card ranked"><div class="mode-icon"><Trophy /></div><span class="mode-tag">赛季排位</span><h3>天梯匹配</h3><p>按棋盘尺寸匹配真人对手，胜负会写入真实积分与排行榜。</p><button v-if="!waiting" :disabled="creating || cooldownRemaining > 0" @click="ranked">开始匹配</button><button v-else @click="cancel">匹配中… 点击取消</button></article>
+        <article class="mode-card featured">
+          <div class="mode-icon"><Bot /></div>
+          <span class="mode-tag">单人训练</span>
+          <h3>秘境试炼</h3>
+          <p>按所选难度与卡组对战 AI，练习邻接、调防、绝杀节奏。</p>
+          <button :disabled="creating || cooldownRemaining > 0" @click="start('AI')">立即挑战 <ChevronRight /></button>
+        </article>
+        <article class="mode-card room-mode">
+          <div class="mode-icon"><Users /></div>
+          <span class="mode-tag">实时联机</span>
+          <h3>好友房间</h3>
+          <p>创建房间后把 8 位房间号发给朋友，双方通过 WebSocket 实时同步。</p>
+          <div class="room-actions">
+            <button class="create-room-button" :disabled="creating || cooldownRemaining > 0" @click="start('PVP')">创建房间</button>
+            <div class="room-join">
+              <input v-model="roomId" maxlength="8" placeholder="输入房间号" />
+              <button :disabled="creating || cooldownRemaining > 0" @click="joinRoom">加入</button>
+            </div>
+          </div>
+        </article>
+        <article class="mode-card ranked">
+          <div class="mode-icon"><Trophy /></div>
+          <span class="mode-tag">赛季排位</span>
+          <h3>天梯匹配</h3>
+          <p>按棋盘尺寸匹配真人对手，胜负写入积分与排行榜（60 秒阶段）。</p>
+          <button v-if="!waiting" :disabled="creating || cooldownRemaining > 0" @click="ranked">开始匹配</button>
+          <button v-else @click="cancel">匹配中… 点击取消</button>
+        </article>
+      </div>
+
+      <div class="extra-modes">
+        <button class="extra-mode" :disabled="creating" @click="start('AI', { scenario: 'tutorial', boardSize: 3, aiDifficulty: 'easy' })">
+          <GraduationCap :size="18" /><span><b>新手教程</b><small>教习讲解 + 四次实操 · 约10分钟</small></span>
+        </button>
+        <button class="extra-mode" :disabled="creating" @click="start('AI', { scenario: 'puzzle', puzzleId: 'core-break', boardSize: 3 })">
+          <Puzzle :size="18" /><span><b>残局：核心突破</b><small>3 灵力夺取天元</small></span>
+        </button>
+        <router-link class="extra-mode" to="/deck">
+          <BookOpen :size="18" /><span><b>主题卡组</b><small>五流派构筑入口</small></span>
+        </router-link>
       </div>
       <p v-if="error" class="inline-error">{{ error }}</p>
     </section>

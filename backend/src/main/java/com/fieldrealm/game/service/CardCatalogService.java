@@ -86,7 +86,84 @@ public class CardCatalogService {
         return card;
     }
 
-    public List<String> starterDeck() {
+    public List<String> starterDeck() { return deckForArchetype("balanced"); }
+
+    public List<String> deckForArchetype(String archetype) {
+        String key = archetype == null ? "balanced" : archetype.toLowerCase(Locale.ROOT);
+        List<String> deck = switch (key) {
+            case "bastion", "壁垒龟" -> archetypeDeckBastion();
+            case "ranger", "游猎射" -> archetypeDeckRanger();
+            case "forge", "锻场突" -> archetypeDeckForge();
+            case "draw", "运营抽" -> archetypeDeckDraw();
+            case "dominion", "绝杀快控" -> archetypeDeckDominion();
+            case "tutorial", "puzzle" -> archetypeDeckBastion();
+            default -> archetypeDeckBalanced();
+        };
+        while (deck.size() < 40) {
+            for (String id : byId.keySet()) {
+                if (deck.size() >= 40) break;
+                deck.add(id);
+            }
+        }
+        return new ArrayList<>(deck.subList(0, 40));
+    }
+
+    public List<Map<String, Object>> archetypes() {
+        List<Map<String, Object>> list = new ArrayList<>();
+        list.add(archetypeInfo("balanced", "均衡初阵", "综合上手", "标准40张，适合熟悉规则"));
+        list.add(archetypeInfo("bastion", "壁垒龟缩", "拖回合拼分", "玄岩壁垒、高守单位、固守术式"));
+        list.add(archetypeInfo("ranger", "游猎射程", "跨距偷核心", "斥候、夜航游侠、折界通路、星灯塔"));
+        list.add(archetypeInfo("forge", "锻场突击", "压倒性滚雪球", "赤焰锻场、决斗家、奔袭者、灵潮"));
+        list.add(archetypeInfo("draw", "运营过牌", "找关键键/秘策", "典藏馆、先知、星图洞见"));
+        list.add(archetypeInfo("dominion", "绝杀快控", "中期过半连结算", "低费场、铺量、万域归一"));
+        return list;
+    }
+
+    public Map<String, Object> deckRules() {
+        Map<String, Object> rules = new LinkedHashMap<>();
+        rules.put("deckSize", 40);
+        rules.put("maxCopies", 2);
+        rules.put("maxSsr", 1);
+        rules.put("minSites", 10);
+        rules.put("minUnits", 12);
+        rules.put("description", "卡组须满40张；同名最多2张；SSR最多1张；场地至少10张、单位至少12张。");
+        return rules;
+    }
+
+    public Map<String, List<String>> cardArchetypeTags() {
+        Map<String, List<String>> tags = new LinkedHashMap<>();
+        tags.put("site-bastion", List.of("bastion"));
+        tags.put("unit-warden", List.of("bastion"));
+        tags.put("unit-architect", List.of("bastion"));
+        tags.put("spell-reinforce", List.of("bastion"));
+        tags.put("site-sanctum", List.of("bastion"));
+        tags.put("unit-scout", List.of("ranger"));
+        tags.put("unit-ranger", List.of("ranger"));
+        tags.put("spell-waygate", List.of("ranger"));
+        tags.put("site-beacon", List.of("ranger", "forge"));
+        tags.put("site-forge", List.of("forge"));
+        tags.put("unit-duelist", List.of("forge"));
+        tags.put("unit-raider", List.of("forge"));
+        tags.put("spell-surge", List.of("forge"));
+        tags.put("site-archive", List.of("draw"));
+        tags.put("unit-oracle", List.of("draw"));
+        tags.put("spell-insight", List.of("draw"));
+        tags.put("unit-channeler", List.of("draw", "dominion"));
+        tags.put("site-verdant", List.of("dominion", "balanced"));
+        tags.put("unit-sentinel", List.of("dominion", "balanced"));
+        tags.put("secret-dominion", List.of("dominion"));
+        tags.put("secret-overgrowth", List.of("dominion"));
+        return tags;
+    }
+
+    private Map<String, Object> archetypeInfo(String id, String name, String path, String cards) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", id); m.put("name", name); m.put("winPath", path); m.put("focus", cards);
+        m.put("cards", deckForArchetype(id));
+        return m;
+    }
+
+    private List<String> archetypeDeckBalanced() {
         List<String> deck = new ArrayList<>();
         safeAdd(deck, "site-verdant", 2); safeAdd(deck, "site-bastion", 2); safeAdd(deck, "site-archive", 2);
         safeAdd(deck, "site-forge", 1); safeAdd(deck, "site-mirror", 1); safeAdd(deck, "site-nexus", 1);
@@ -98,8 +175,68 @@ public class CardCatalogService {
         safeAdd(deck, "spell-seal", 2); safeAdd(deck, "spell-surge", 2); safeAdd(deck, "spell-insight", 2);
         safeAdd(deck, "spell-waygate", 1); safeAdd(deck, "spell-muster", 2); safeAdd(deck, "spell-expedition", 2);
         safeAdd(deck, "secret-dominion", 1); safeAdd(deck, "secret-overgrowth", 1);
-        for (String id : byId.keySet()) while (deck.size() < 40) deck.add(id);
-        return new ArrayList<>(deck.subList(0, Math.min(40, deck.size())));
+        return deck;
+    }
+
+    private List<String> archetypeDeckBastion() {
+        List<String> deck = new ArrayList<>();
+        safeAdd(deck, "site-bastion", 2); safeAdd(deck, "site-sanctum", 2); safeAdd(deck, "site-mirror", 2);
+        safeAdd(deck, "site-verdant", 2); safeAdd(deck, "site-nexus", 2); safeAdd(deck, "site-harvest", 2);
+        safeAdd(deck, "unit-warden", 2); safeAdd(deck, "unit-architect", 2); safeAdd(deck, "unit-weaver", 2);
+        safeAdd(deck, "unit-sentinel", 2); safeAdd(deck, "unit-oracle", 1); safeAdd(deck, "unit-channeler", 1);
+        safeAdd(deck, "spell-reinforce", 2); safeAdd(deck, "spell-seal", 2); safeAdd(deck, "spell-muster", 2);
+        safeAdd(deck, "spell-insight", 2); safeAdd(deck, "spell-expedition", 2);
+        safeAdd(deck, "secret-overgrowth", 1); safeAdd(deck, "site-archive", 2); safeAdd(deck, "unit-scout", 1);
+        return deck;
+    }
+
+    private List<String> archetypeDeckRanger() {
+        List<String> deck = new ArrayList<>();
+        safeAdd(deck, "site-beacon", 2); safeAdd(deck, "site-archive", 2); safeAdd(deck, "site-verdant", 2);
+        safeAdd(deck, "site-forge", 2); safeAdd(deck, "site-nexus", 1); safeAdd(deck, "site-mirror", 1);
+        safeAdd(deck, "unit-scout", 2); safeAdd(deck, "unit-ranger", 2); safeAdd(deck, "unit-vanguard", 2);
+        safeAdd(deck, "unit-duelist", 2); safeAdd(deck, "unit-raider", 1); safeAdd(deck, "unit-sentinel", 1);
+        safeAdd(deck, "spell-waygate", 2); safeAdd(deck, "spell-surge", 2); safeAdd(deck, "spell-insight", 2);
+        safeAdd(deck, "spell-expedition", 2); safeAdd(deck, "spell-seal", 1); safeAdd(deck, "spell-muster", 2);
+        safeAdd(deck, "secret-dominion", 1); safeAdd(deck, "site-bastion", 1); safeAdd(deck, "unit-channeler", 1);
+        return deck;
+    }
+
+    private List<String> archetypeDeckForge() {
+        List<String> deck = new ArrayList<>();
+        safeAdd(deck, "site-forge", 2); safeAdd(deck, "site-beacon", 2); safeAdd(deck, "site-verdant", 2);
+        safeAdd(deck, "site-archive", 2); safeAdd(deck, "site-nexus", 1); safeAdd(deck, "site-harvest", 1);
+        safeAdd(deck, "unit-duelist", 2); safeAdd(deck, "unit-raider", 2); safeAdd(deck, "unit-vanguard", 2);
+        safeAdd(deck, "unit-scout", 2); safeAdd(deck, "unit-sentinel", 1); safeAdd(deck, "unit-channeler", 1);
+        safeAdd(deck, "spell-surge", 2); safeAdd(deck, "spell-waygate", 2); safeAdd(deck, "spell-muster", 2);
+        safeAdd(deck, "spell-insight", 2); safeAdd(deck, "spell-expedition", 2); safeAdd(deck, "spell-seal", 1);
+        safeAdd(deck, "secret-dominion", 1); safeAdd(deck, "site-mirror", 1); safeAdd(deck, "unit-oracle", 1);
+        return deck;
+    }
+
+    private List<String> archetypeDeckDraw() {
+        List<String> deck = new ArrayList<>();
+        safeAdd(deck, "site-archive", 2); safeAdd(deck, "site-verdant", 2); safeAdd(deck, "site-nexus", 2);
+        safeAdd(deck, "site-mirror", 2); safeAdd(deck, "site-harvest", 2); safeAdd(deck, "site-bastion", 1);
+        safeAdd(deck, "unit-oracle", 2); safeAdd(deck, "unit-channeler", 2); safeAdd(deck, "unit-sentinel", 2);
+        safeAdd(deck, "unit-architect", 1); safeAdd(deck, "unit-scout", 1); safeAdd(deck, "unit-warden", 1);
+        safeAdd(deck, "spell-insight", 2); safeAdd(deck, "spell-expedition", 2); safeAdd(deck, "spell-muster", 2);
+        safeAdd(deck, "spell-seal", 2); safeAdd(deck, "spell-reinforce", 2); safeAdd(deck, "spell-surge", 1);
+        safeAdd(deck, "secret-overgrowth", 1); safeAdd(deck, "site-sanctum", 1); safeAdd(deck, "unit-weaver", 1);
+        safeAdd(deck, "spell-echo", 1);
+        return deck;
+    }
+
+    private List<String> archetypeDeckDominion() {
+        List<String> deck = new ArrayList<>();
+        safeAdd(deck, "site-verdant", 2); safeAdd(deck, "site-archive", 2); safeAdd(deck, "site-nexus", 2);
+        safeAdd(deck, "site-beacon", 2); safeAdd(deck, "site-forge", 1); safeAdd(deck, "site-harvest", 2);
+        safeAdd(deck, "unit-sentinel", 2); safeAdd(deck, "unit-scout", 2); safeAdd(deck, "unit-channeler", 2);
+        safeAdd(deck, "unit-duelist", 1); safeAdd(deck, "unit-vanguard", 1); safeAdd(deck, "unit-ranger", 1);
+        safeAdd(deck, "spell-insight", 2); safeAdd(deck, "spell-expedition", 2); safeAdd(deck, "spell-waygate", 2);
+        safeAdd(deck, "spell-surge", 2); safeAdd(deck, "spell-muster", 2); safeAdd(deck, "spell-seal", 1);
+        safeAdd(deck, "secret-dominion", 1); safeAdd(deck, "secret-overgrowth", 1); safeAdd(deck, "site-mirror", 1);
+        return deck;
     }
 
     private void loadOverrides() {

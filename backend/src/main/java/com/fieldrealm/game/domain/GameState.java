@@ -32,6 +32,15 @@ public class GameState {
     private Instant updatedAt = Instant.now();
     private Instant phaseEndsAt;
     private int phaseDurationSeconds = 60;
+    /** easy / normal / hard */
+    private String aiDifficulty = "normal";
+    /** standard / tutorial / puzzle */
+    private String scenario = "standard";
+    private String deckArchetype;
+    private int dominationTarget;
+    private boolean finalRound;
+    private String tutorialStep;
+    private Map<String, Object> meta = new LinkedHashMap<>();
 
     public PlayerState activePlayer() { return players.get(activePlayerIndex); }
     public PlayerState opponent() { return players.get(1 - activePlayerIndex); }
@@ -86,4 +95,18 @@ public class GameState {
     public void setPhaseEndsAt(Instant phaseEndsAt) { this.phaseEndsAt = phaseEndsAt; }
     public int getPhaseDurationSeconds() { return phaseDurationSeconds; }
     public void setPhaseDurationSeconds(int phaseDurationSeconds) { this.phaseDurationSeconds = phaseDurationSeconds; }
+    public String getAiDifficulty() { return aiDifficulty; }
+    public void setAiDifficulty(String aiDifficulty) { this.aiDifficulty = aiDifficulty; }
+    public String getScenario() { return scenario; }
+    public void setScenario(String scenario) { this.scenario = scenario; }
+    public String getDeckArchetype() { return deckArchetype; }
+    public void setDeckArchetype(String deckArchetype) { this.deckArchetype = deckArchetype; }
+    public int getDominationTarget() { return dominationTarget; }
+    public void setDominationTarget(int dominationTarget) { this.dominationTarget = dominationTarget; }
+    public boolean isFinalRound() { return finalRound; }
+    public void setFinalRound(boolean finalRound) { this.finalRound = finalRound; }
+    public String getTutorialStep() { return tutorialStep; }
+    public void setTutorialStep(String tutorialStep) { this.tutorialStep = tutorialStep; }
+    public Map<String, Object> getMeta() { return meta; }
+    public void setMeta(Map<String, Object> meta) { this.meta = meta; }
 }

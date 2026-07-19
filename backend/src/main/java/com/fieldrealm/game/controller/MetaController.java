@@ -41,7 +41,30 @@ public class MetaController {
     public List<Map<String, Object>> rankings() { return auth.rankings(); }
 
     @GetMapping("/decks/starter")
-    public Map<String, Object> starterDeck() {
-        return Map.of("id", "starter", "name", "\u4e94\u57df\u521d\u9635", "cards", catalog.starterDeck(), "valid", true);
+    public Map<String, Object> starterDeck(@RequestParam(value = "archetype", required = false) String archetype) {
+        String id = archetype == null || archetype.isBlank() ? "balanced" : archetype;
+        return Map.of(
+                "id", id,
+                "name", "主题卡组",
+                "cards", catalog.deckForArchetype(id),
+                "valid", true,
+                "rules", catalog.deckRules()
+        );
+    }
+
+    @GetMapping("/decks/archetypes")
+    public List<Map<String, Object>> archetypes() { return catalog.archetypes(); }
+
+    @GetMapping("/decks/rules")
+    public Map<String, Object> deckRules() { return catalog.deckRules(); }
+
+    @GetMapping("/cards/tags")
+    public Map<String, List<String>> cardTags() { return catalog.cardArchetypeTags(); }
+
+    @GetMapping("/puzzles")
+    public List<Map<String, Object>> puzzles() {
+        return List.of(
+                Map.of("id", "core-break", "name", "核心突破", "desc", "3点灵力内夺取天元核心", "boardSize", 3)
+        );
     }
 }

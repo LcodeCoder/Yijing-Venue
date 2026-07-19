@@ -14,6 +14,10 @@ public class PlayerState {
     private int stableTicks;
     private int scoringBonusThisTurn;
     private boolean secretUsed;
+    /** 气势 0～3，满层可免费发动 1 费术式 */
+    private int momentum;
+    /** 本回合是否已使用筛牌（弃1抽1） */
+    private boolean cycleUsedThisTurn;
     private List<String> deck = new ArrayList<>();
     private List<String> hand = new ArrayList<>();
     private List<String> discard = new ArrayList<>();
@@ -43,6 +47,10 @@ public class PlayerState {
     public void setScoringBonusThisTurn(int scoringBonusThisTurn) { this.scoringBonusThisTurn = scoringBonusThisTurn; }
     public boolean isSecretUsed() { return secretUsed; }
     public void setSecretUsed(boolean secretUsed) { this.secretUsed = secretUsed; }
+    public int getMomentum() { return momentum; }
+    public void setMomentum(int momentum) { this.momentum = Math.max(0, Math.min(3, momentum)); }
+    public boolean isCycleUsedThisTurn() { return cycleUsedThisTurn; }
+    public void setCycleUsedThisTurn(boolean cycleUsedThisTurn) { this.cycleUsedThisTurn = cycleUsedThisTurn; }
     public List<String> getDeck() { return deck; }
     public void setDeck(List<String> deck) { this.deck = deck; }
     public List<String> getHand() { return hand; }

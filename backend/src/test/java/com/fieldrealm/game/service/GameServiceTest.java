@@ -180,11 +180,13 @@ class GameServiceTest {
     }
 
     @Test
-    void phasesUseSixtySecondDeadline() {
-        GameState game = games.create("AI", "Tester");
+    void phasesUseAiNinetyAndPvpSixtySecondDeadline() {
+        GameState ai = games.create("AI", "Tester");
+        assertThat(ai.getPhaseDurationSeconds()).isEqualTo(90);
 
+        GameState pvp = games.create("PVP", "Host");
+        // waiting room has no phase timer until opponent joins
         assertThat(GameService.PHASE_DURATION_SECONDS).isEqualTo(60);
-        assertThat(game.getPhaseDurationSeconds()).isEqualTo(60);
     }
 
     @Test
