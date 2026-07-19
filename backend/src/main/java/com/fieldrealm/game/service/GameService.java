@@ -234,8 +234,8 @@ public class GameService {
     }
 
     private int normalizeBoardSize(int size) { return size == 4 || size == 5 ? size : 3; }
-    private int turnEnergy(GameState game) { return normalizeBoardSize(game.getBoardSize()); }
-    private int maxRounds(GameState game) { return turnEnergy(game) * 3; }
+    private int turnEnergy(GameState game) { return normalizeBoardSize(game.getBoardSize()) + 1; }
+    private int maxRounds(GameState game) { return normalizeBoardSize(game.getBoardSize()) * 3; }
     private String normalizeDifficulty(String raw) {
         if (raw == null) return "normal";
         return switch (raw.trim().toLowerCase(Locale.ROOT)) {
@@ -388,7 +388,7 @@ public class GameService {
         int defense = target.totalGuard();
         attacker.setExhausted(true);
         String result;
-        boolean success = attackPower > defense;
+        boolean success = attackPower >= defense;
         if (success) {
             if ("FORTRESS".equals(target.getEffectCode()) && !target.isCore()) {
                 if (player.getId().equals(target.getPendingAttackerId())) target.setFortressHits(target.getFortressHits() + 1);
@@ -419,7 +419,7 @@ public class GameService {
                 return game;
             }
         } else {
-            result = attackPower == defense ? "战力与守力持平，归属不变" : "守方稳住场地，争夺失败";
+            result = "守方稳住场地，争夺失败";
             if ("MIRROR".equals(target.getEffectCode()) && target.getOwnerId() != null) {
                 playerById(game, target.getOwnerId()).setScore(playerById(game, target.getOwnerId()).getScore() + 1);
                 result += "；镜潮回廊反制获得1分";
@@ -586,12 +586,13 @@ public class GameService {
             throw new IllegalArgumentException("只能在部署或争夺阶段弃牌");
         }
         if (!player.getHand().remove(cardId)) throw new IllegalArgumentException("手牌中没有这张卡");
-        player.getDiscard().add(cardId);
         CardDefinition card = catalog.require(cardId);
         if (card.type() == CardType.SITE) {
             draw(player, 1);
+            player.getDiscard().add(cardId);
             game.setStatusText("已主动弃置「" + card.name() + "」并抽1张");
         } else if (card.type() == CardType.UNIT) {
+            player.getDiscard().add(cardId);
             game.getSites().stream().flatMap(s -> s.getUnits().stream())
                     .filter(u -> player.getId().equals(u.getOwnerId()))
                     .findFirst()
@@ -601,6 +602,7 @@ public class GameService {
                     });
             game.setStatusText("已主动弃置「" + card.name() + "」：己方单位本回合射程+1");
         } else {
+            player.getDiscard().add(cardId);
             game.setStatusText("已主动弃置「" + card.name() + "」");
         }
         log(game, player.getName() + " 弃置了1张手牌");
@@ -1220,13 +1222,6 @@ public class GameService {
         game.setDominationTarget(game.getSites().size() / 2 + 1);
         int roundLimit = maxRounds(game);
         game.setFinalRound(game.getRound() >= roundLimit && game.isInitialContestResolved());
-        for (SiteState site : game.getSites()) {
-            int bonus = 0;
-            if (site.getOwnerId() != null && hasAdjacentOwnSite(game, site, site.getOwnerId())) {
-                bonus = 1; // 邻接协同守力+1
-            }
-            site.setAdjacencyGuardBonus(bonus);
-        }
         // 绝杀预警写入 meta
         Map<String, Object> meta = game.getMeta();
         if (meta == null) {
@@ -1335,7 +1330,15 @@ public class GameService {
         }
     }
     private void draw(PlayerState p, int amount) {
-        for (int i = 0; i < amount && !p.getDeck().isEmpty(); i++) p.getHand().add(p.getDeck().remove(0));
+        for (int i = 0; i < amount; i++) {
+            if (p.getDeck().isEmpty() && !p.getDiscard().isEmpty()) {
+                p.getDeck().addAll(p.getDiscard());
+                p.getDiscard().clear();
+                Collections.shuffle(p.getDeck(), random);
+            }
+            if (p.getDeck().isEmpty()) break;
+            p.getHand().add(p.getDeck().remove(0));
+        }
     }
     private int enforceHandLimit(PlayerState p) {
         int discarded = 0;

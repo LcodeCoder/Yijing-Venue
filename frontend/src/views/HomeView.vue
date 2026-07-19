@@ -158,7 +158,7 @@ onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
         <p v-if="error" class="inline-error">{{ error }}</p>
         <div class="hero-stats">
           <span><b>3×3～5×5</b><small>可变域面</small></span>
-          <span><b>=边长</b><small>每回合灵力</small></span>
+          <span><b>边长+1</b><small>每回合灵力</small></span>
           <span><b>×3</b><small>总回合数</small></span>
           <span><b>2</b><small>胜利路线</small></span>
         </div>
@@ -197,7 +197,7 @@ onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
       <div class="section-heading">
         <span>选择你的道路</span>
         <h2>3×3、4×4、5×5 三种弈境</h2>
-        <p>灵力 = 棋盘边长；总回合 = 边长 × 3。默认推荐 3×3，4×4/5×5 为进阶规格。</p>
+        <p>灵力 = 棋盘边长 + 1；总回合 = 边长 × 3。默认推荐 3×3，4×4/5×5 为进阶规格。</p>
       </div>
       <div class="board-size-picker">
         <button v-for="n in [3, 4, 5]" :key="n" :class="{ active: boardSize === n }" @click="boardSize = n">

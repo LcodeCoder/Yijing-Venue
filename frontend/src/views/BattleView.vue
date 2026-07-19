@@ -431,9 +431,11 @@ function shortcuts(e) {
   }
   if (e.key.toLowerCase() === 'c' && game.value?.phase === 'DEPLOY') {
     if (initialDeployment.value && bothInitialSitesReady.value) showInitiativeFx()
-    else initialDeployment.value ? completeInitialDeployment() : enterContest()
+    else if (initialDeployment.value) completeInitialDeployment()
+    else if (rivalReady.value) enterContest()
+    else endTurn()
   }
-  if (e.key.toLowerCase() === 'e' && game.value?.phase === 'CONTEST') endTurn()
+  if (e.key.toLowerCase() === 'e' && (game.value?.phase === 'CONTEST' || (game.value?.phase === 'DEPLOY' && !initialDeployment.value && !rivalReady.value))) endTurn()
   if (e.key === 'Escape') {
     deactivateBoardInteraction()
     clearSelection()
@@ -1315,7 +1317,7 @@ const tutorialCurriculum = [
       '绿边/己：你控制的场地',
       '红边/敌：对手控制的场地',
       '无主：需要用地场卡部署占领（不能直接攻击占领）',
-      '相邻己方场地会触发「邻接协同」：守力与结算分更有优势'
+      '相邻己方场地会触发「邻接协同」：结算时额外 +1 分'
     ],
     tip: '把棋盘想成连在一起的地盘，而不是九个独立格子。',
     practice: false
@@ -1358,7 +1360,7 @@ const tutorialCurriculum = [
     bullets: [
       '部署阶段：打牌、驻军、调防（1 灵力挪单位）、筛牌（弃1抽1）',
       '争夺阶段：用未行动单位攻击射程内的敌方场地',
-      '战力 > 守力：夺取归属；壁垒场地通常要连续成功两次',
+      '战力 ≥ 守力：夺取归属；壁垒场地通常要连续成功两次',
       '终局回合不能新放场地，只能术式、调防与争夺'
     ],
     tip: '快捷键：C 进入争夺/完成初始部署，E 结束回合，Esc 取消选择。',
@@ -1388,7 +1390,7 @@ const tutorialCurriculum = [
     bullets: [
       '单位只能放在己方场地上',
       '每个场地最多 2 个单位',
-      '战力用于进攻，守力加到场地总守力',
+      '战力用于进攻；守力取最强一名计入总守力，第2名单位额外+1支援',
       '单位不会被消灭；但所在场被夺时会「动摇」'
     ],
     tip: '若点错卡：再点一次取消，或按 Esc。',
@@ -1416,9 +1418,9 @@ const tutorialCurriculum = [
     id: 'contest_rules',
     chapter: '争夺',
     title: '争夺怎么算赢',
-    body: '争夺阶段：先点己方单位，再点金色高亮的敌方场地。只有「战力 > 总守力」才会易主。',
+    body: '争夺阶段：先点己方单位，再点金色高亮的敌方场地。只有「战力 ≥ 总守力」才会易主。',
     bullets: [
-      '总守力 = 场地基础守力 + 驻军守力 + 邻接等加成',
+      '总守力 = max(场地基础守力, 最强驻军守力) + 支援(≥2单位+1) + 关键词加成',
       '射程不够的目标会变暗，并提示「超出射程」',
       '夹击：目标被你 ≥2 块相邻场地夹住时，战力 +1',
       '压倒性（战力高出 3 点及以上）额外 +1 分',
@@ -1711,7 +1713,7 @@ function siteSvgY(site) {
         <div class="combatant"><span class="combatant-avatar">{{ player.avatar }}</span><div><small>{{ player.title }}</small><b>{{ player.name }}</b></div></div>
         <div class="turn-guidance"><span :class="{ active: humanTurn }">{{ humanTurn ? '你的回合' : '等待对手' }}</span><p>{{ instruction }}</p><div class="action-guide"><span v-for="(step, index) in actionSteps" :key="step.label" :class="{ done: step.done, current: index === (selectedCard || selectedUnit ? 1 : 0) }"><i>{{ step.done ? '✓' : index + 1 }}</i>{{ step.label }}</span></div></div>
         <div class="resource-cluster">
-          <span class="energy-pips" title="本回合灵力"><i v-for="n in (game.boardSize || 3)" :key="n" :class="{ filled: n <= player.energy }">✦</i></span>
+          <span class="energy-pips" title="本回合灵力"><i v-for="n in ((game.boardSize || 3) + 1)" :key="n" :class="{ filled: n <= player.energy }">✦</i></span>
           <span class="momentum-pips" title="气势（满3可免费1费术式）" aria-label="气势"><i v-for="n in 3" :key="'m'+n" :class="{ filled: n <= (player.momentum || 0) }">◆</i></span>
           <span class="dominion-meter" :class="{ hot: playerKillProgress >= 1 }" title="绝杀进度">绝杀 <b>{{ playerKillProgress }}</b>/2</span>
           <span class="control-count">控制 <b>{{ controlled(localPlayerId) }}</b>/{{ game.sites.length }}</span>

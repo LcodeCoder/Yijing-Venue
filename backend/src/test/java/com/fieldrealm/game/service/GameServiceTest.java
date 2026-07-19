@@ -12,6 +12,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 
+import java.util.Random;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
@@ -23,14 +25,14 @@ class GameServiceTest {
     @BeforeEach
     void setUp() {
         catalog = new CardCatalogService();
-        games = new GameService(catalog, mock(SimpMessagingTemplate.class));
+        games = new GameService(catalog, mock(SimpMessagingTemplate.class), new Random(42L));
     }
 
     @Test
     void demoMatchStartsWithNineSitesOneCoreAndAPlayableOpeningSite() {
         for (int i = 0; i < 20; i++) {
             GameState game = games.create("AI", "Tester");
-            assertThat(game.getPlayers().get(0).getEnergy()).isEqualTo(3);
+            assertThat(game.getPlayers().get(0).getEnergy()).isEqualTo(4);
             assertThat(game.getPlayers().get(0).getHand()).hasSize(4)
                     .anySatisfy(id -> assertThat(catalog.require(id).type()).isEqualTo(CardType.SITE));
             assertThat(game.getSites()).hasSize(9);
@@ -42,16 +44,16 @@ class GameServiceTest {
     @Test
     void boardSizeControlsEnergyGrantedAtMatchStartAndEveryTurn() {
         GameState fourByFour = games.create("AI", "Tester", 4, null, false);
-        assertThat(fourByFour.getPlayers().get(0).getEnergy()).isEqualTo(4);
+        assertThat(fourByFour.getPlayers().get(0).getEnergy()).isEqualTo(5);
 
         fourByFour.setInitialContestResolved(true);
         fourByFour.setPhase(GamePhase.CONTEST);
         fourByFour.setMode("PVP");
         games.endTurn(fourByFour.getId(), "p1");
-        assertThat(fourByFour.getPlayers().get(1).getEnergy()).isEqualTo(4);
+        assertThat(fourByFour.getPlayers().get(1).getEnergy()).isEqualTo(5);
 
         GameState fiveByFive = games.create("AI", "Tester", 5, null, false);
-        assertThat(fiveByFive.getPlayers().get(0).getEnergy()).isEqualTo(5);
+        assertThat(fiveByFive.getPlayers().get(0).getEnergy()).isEqualTo(6);
     }
 
     @Test
@@ -109,7 +111,7 @@ class GameServiceTest {
         GameState after = games.playCard(game.getId(), new PlayCardRequest("p1", siteId, 8, null));
         assertThat(after.getSites().get(8).getOwnerId()).isEqualTo("p1");
         assertThat(after.getSites().get(8).isCore()).isTrue();
-        assertThat(after.getPlayers().get(0).getEnergy()).isEqualTo(3 - site.cost());
+        assertThat(after.getPlayers().get(0).getEnergy()).isEqualTo(4 - site.cost());
         assertThat(after.getPhase()).isEqualTo(GamePhase.DEPLOY);
     }
 

@@ -35,8 +35,12 @@ const totalGuard = computed(() => {
   if (typeof props.site.totalGuard === 'function') return props.site.totalGuard()
   const base = props.site.baseGuard || 0
   const units = (props.site.units || []).filter(u => !u.sealed)
-  const unitGuard = units.reduce((n, u) => n + Math.max(0, (u.guard || 0) + ((u.rootedTurns || 0) >= 2 ? 1 : 0) - (u.shaken ? 1 : 0)), 0)
-  return base + unitGuard + (props.site.adjacencyGuardBonus || 0)
+  const guards = units.map(u => Math.max(0, (u.guard || 0) + ((u.rootedTurns || 0) >= 2 ? 1 : 0) - (u.shaken ? 1 : 0)))
+  const strongest = guards.length ? Math.max(...guards) : 0
+  const support = units.length >= 2 ? 1 : 0
+  const weaver = units.some(u => u.keyword === 'WEAVER') ? 1 : 0
+  const sanctuary = props.site.effectCode === 'SANCTUARY' && units.length ? 1 : 0
+  return Math.max(base, strongest) + support + weaver + sanctuary
 })
 const unitCanTarget = unit => props.targetMode === 'unit' && (!props.targetUnitOwner || unit.ownerId === props.targetUnitOwner)
 const detailOpen = computed(() => false)
@@ -81,7 +85,6 @@ const detailOpen = computed(() => false)
       <b><Star :size="13"/>{{ site.frontier ? 0 : (site.basePoints || 0) * (site.core ? 2 : 1) }}{{ site.core ? '×2' : '' }}</b>
       <b><Shield :size="13"/>{{ totalGuard }}</b>
       <em class="site-capacity">{{ site.units.length }}/2</em>
-      <em v-if="site.adjacencyGuardBonus" class="adj-bonus">邻+{{ site.adjacencyGuardBonus }}</em>
       <em v-if="site.effectCode === 'FORTRESS' && site.fortressHits">突破 {{ site.fortressHits }}/2</em>
     </span>
     <TransitionGroup v-if="site.units.length" name="unit-list" tag="span" class="units-row">

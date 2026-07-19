@@ -20,8 +20,6 @@ public class SiteState {
     private String effect;
     private String pendingAttackerId;
     private int fortressHits;
-    /** 邻接协同提供的额外守力（结算前由引擎写入） */
-    private int adjacencyGuardBonus;
     private List<UnitInstance> units = new ArrayList<>();
 
     public SiteState() { }
@@ -33,12 +31,13 @@ public class SiteState {
     }
 
     public int totalGuard() {
-        int unitGuard = units.stream().filter(u -> !u.isSealed()).mapToInt(UnitInstance::effectiveGuard).sum();
-        int weaver = (int) units.stream().filter(u -> !u.isSealed() && "WEAVER".equals(u.getKeyword())).count();
-        int sanctuary = "SANCTUARY".equals(effectCode)
-                ? (int) units.stream().filter(u -> ownerId != null && ownerId.equals(u.getOwnerId())).count()
-                : 0;
-        return baseGuard + unitGuard + weaver + sanctuary + adjacencyGuardBonus;
+        List<UnitInstance> defenders = units.stream().filter(u -> !u.isSealed()).toList();
+        int strongestGuard = defenders.stream().mapToInt(UnitInstance::effectiveGuard).max().orElse(0);
+        int mainDefense = Math.max(baseGuard, strongestGuard);
+        int supportGuard = defenders.size() >= 2 ? 1 : 0;
+        int weaver = defenders.stream().anyMatch(u -> "WEAVER".equals(u.getKeyword())) ? 1 : 0;
+        int sanctuary = "SANCTUARY".equals(effectCode) && !defenders.isEmpty() ? 1 : 0;
+        return mainDefense + supportGuard + weaver + sanctuary;
     }
 
     public int scoringValue() {
@@ -76,8 +75,6 @@ public class SiteState {
     public void setPendingAttackerId(String pendingAttackerId) { this.pendingAttackerId = pendingAttackerId; }
     public int getFortressHits() { return fortressHits; }
     public void setFortressHits(int fortressHits) { this.fortressHits = fortressHits; }
-    public int getAdjacencyGuardBonus() { return adjacencyGuardBonus; }
-    public void setAdjacencyGuardBonus(int adjacencyGuardBonus) { this.adjacencyGuardBonus = adjacencyGuardBonus; }
     public List<UnitInstance> getUnits() { return units; }
     public void setUnits(List<UnitInstance> units) { this.units = units; }
 }

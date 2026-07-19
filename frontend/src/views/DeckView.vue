@@ -44,11 +44,11 @@ const stats = computed(() => {
   const sites = deckIds.value.filter(id => cards.value.find(c => c.id === id)?.type === 'SITE').length
   const units = deckIds.value.filter(id => cards.value.find(c => c.id === id)?.type === 'UNIT').length
   const ssr = deckIds.value.filter(id => cards.value.find(c => c.id === id)?.rarity === 'SSR').length
-  const copiesOk = entries.value.every(e => e.count <= (rules.value?.maxCopies || 2) || e.card.rarity === 'SSR')
-  const ssrOk = ssr <= (rules.value?.maxSsr || 1)
-  const siteOk = sites >= (rules.value?.minSites || 10)
-  const unitOk = units >= (rules.value?.minUnits || 12)
-  const sizeOk = total === (rules.value?.deckSize || 40)
+  const copiesOk = entries.value.every(e => e.count <= (rules.value?.maxCopies || 8) || e.card.rarity === 'SSR')
+  const ssrOk = ssr <= (rules.value?.maxSsr || 8)
+  const siteOk = sites >= (rules.value?.minSites || 40)
+  const unitOk = units >= (rules.value?.minUnits || 60)
+  const sizeOk = total === (rules.value?.deckSize || 200)
   const valid = sizeOk && siteOk && unitOk && ssrOk
   const avg = total ? (deckIds.value.reduce((n, id) => n + (cards.value.find(c => c.id === id)?.cost || 0), 0) / total).toFixed(1) : 0
   return { total, sites, units, ssr, avg, valid, copiesOk, ssrOk, siteOk, unitOk, sizeOk }
@@ -61,7 +61,7 @@ const stats = computed(() => {
       <div>
         <span>卡组构筑</span>
         <h1>主题卡组与构筑约束</h1>
-        <p>{{ rules?.description || '卡组须满40张；同名最多2张；SSR最多1张；场地至少10张、单位至少12张。' }}</p>
+        <p>{{ rules?.description || '卡组须满200张；同名最多8张；SSR最多8张；场地至少40张、单位至少60张。' }}</p>
       </div>
       <div class="valid-badge" :class="{ invalid: !stats.valid }">
         <CheckCircle2 v-if="stats.valid"/><AlertTriangle v-else/>
@@ -84,10 +84,10 @@ const stats = computed(() => {
     </section>
 
     <section class="deck-stats">
-      <article><Layers3/><div><b>{{ stats.total }} / {{ rules?.deckSize || 40 }}</b><small>卡组总数</small></div></article>
-      <article><Sparkles/><div><b>{{ stats.sites }}</b><small>场地 ≥ {{ rules?.minSites || 10 }}</small></div></article>
-      <article><Sword/><div><b>{{ stats.units }}</b><small>单位 ≥ {{ rules?.minUnits || 12 }}</small></div></article>
-      <article><Shield/><div><b>{{ stats.avg }}</b><small>平均灵力 · SSR {{ stats.ssr }}/{{ rules?.maxSsr || 1 }}</small></div></article>
+      <article><Layers3/><div><b>{{ stats.total }} / {{ rules?.deckSize || 200 }}</b><small>卡组总数</small></div></article>
+      <article><Sparkles/><div><b>{{ stats.sites }}</b><small>场地 ≥ {{ rules?.minSites || 40 }}</small></div></article>
+      <article><Sword/><div><b>{{ stats.units }}</b><small>单位 ≥ {{ rules?.minUnits || 60 }}</small></div></article>
+      <article><Shield/><div><b>{{ stats.avg }}</b><small>平均灵力 · SSR {{ stats.ssr }}/{{ rules?.maxSsr || 8 }}</small></div></article>
     </section>
 
     <div class="deck-layout">
@@ -117,7 +117,7 @@ const stats = computed(() => {
         <div v-else class="preview-placeholder">
           <Layers3/>
           <b>选择卡牌查看详情</b>
-          <p>同名最多{{ rules?.maxCopies || 2 }}张，SSR 最多{{ rules?.maxSsr || 1 }}张。首页可选主题卡组直接开打。</p>
+          <p>同名最多{{ rules?.maxCopies || 8 }}张，SSR 最多{{ rules?.maxSsr || 8 }}张。首页可选主题卡组直接开打。</p>
         </div>
         <div class="curve-panel glass-panel">
           <span>灵力曲线</span>

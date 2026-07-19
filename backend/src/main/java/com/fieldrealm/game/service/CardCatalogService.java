@@ -12,6 +12,12 @@ import java.util.stream.Collectors;
 
 @Service
 public class CardCatalogService {
+    public static final int DECK_SIZE = 200;
+    public static final int MAX_COPIES = 8;
+    public static final int MAX_SSR = 8;
+    public static final int MIN_SITES = 40;
+    public static final int MIN_UNITS = 60;
+
     private List<CardDefinition> cards;
     private final Map<String, CardDefinition> byId;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
@@ -99,13 +105,24 @@ public class CardCatalogService {
             case "tutorial", "puzzle" -> archetypeDeckBastion();
             default -> archetypeDeckBalanced();
         };
-        while (deck.size() < 40) {
+        Map<String, Long> copies = deck.stream().collect(Collectors.groupingBy(Function.identity(), LinkedHashMap::new, Collectors.counting()));
+        int ssrCount = (int) deck.stream().map(this::require).filter(card -> card.rarity() == Rarity.SSR).count();
+        while (deck.size() < DECK_SIZE) {
+            boolean added = false;
             for (String id : byId.keySet()) {
-                if (deck.size() >= 40) break;
+                if (deck.size() >= DECK_SIZE) break;
+                CardDefinition card = require(id);
+                long count = copies.getOrDefault(id, 0L);
+                if (count >= MAX_COPIES) continue;
+                if (card.rarity() == Rarity.SSR && ssrCount >= MAX_SSR) continue;
                 deck.add(id);
+                copies.put(id, count + 1);
+                if (card.rarity() == Rarity.SSR) ssrCount++;
+                added = true;
             }
+            if (!added) throw new IllegalStateException("Card pool cannot build a legal " + DECK_SIZE + "-card deck");
         }
-        return new ArrayList<>(deck.subList(0, 40));
+        return new ArrayList<>(deck.subList(0, DECK_SIZE));
     }
 
     public List<Map<String, Object>> archetypes() {
@@ -121,12 +138,12 @@ public class CardCatalogService {
 
     public Map<String, Object> deckRules() {
         Map<String, Object> rules = new LinkedHashMap<>();
-        rules.put("deckSize", 40);
-        rules.put("maxCopies", 2);
-        rules.put("maxSsr", 1);
-        rules.put("minSites", 10);
-        rules.put("minUnits", 12);
-        rules.put("description", "卡组须满40张；同名最多2张；SSR最多1张；场地至少10张、单位至少12张。");
+        rules.put("deckSize", DECK_SIZE);
+        rules.put("maxCopies", MAX_COPIES);
+        rules.put("maxSsr", MAX_SSR);
+        rules.put("minSites", MIN_SITES);
+        rules.put("minUnits", MIN_UNITS);
+        rules.put("description", "卡组须满200张；同名最多8张；SSR最多8张；场地至少40张、单位至少60张。");
         return rules;
     }
 
