@@ -16,11 +16,19 @@ const detailsOpen = ref(false)
 const detailPosition = ref({ left: 12, top: 12 })
 let detailAnchor = { x: 12, y: 12 }
 
+/** 触摸：长按出详情；滑动超过阈值则当作翻牌，取消选中 */
+const LONG_PRESS_MS = 420
+const MOVE_CANCEL_PX = 12
+let longPressTimer = null
+let pressStart = null
+let pressMoved = false
+let suppressClick = false
+
 const meta = computed(() => typeMeta[props.card.type] || typeMeta.UNIT)
 const detailStats = computed(() => {
-  const stats = [`\u7075\u529b ${props.card.cost}`]
-  if (props.card.type === 'UNIT') stats.push(`\u6218 ${props.card.power}`, `\u5b88 ${props.card.guard}`)
-  if (props.card.type === 'SITE') stats.push(`\u5206 ${props.card.points}`, `\u5b88 ${props.card.guard}`)
+  const stats = [`灵力 ${props.card.cost}`]
+  if (props.card.type === 'UNIT') stats.push(`战 ${props.card.power}`, `守 ${props.card.guard}`)
+  if (props.card.type === 'SITE') stats.push(`分 ${props.card.points}`, `守 ${props.card.guard}`)
   return stats
 })
 const detailStyle = computed(() => ({
@@ -33,10 +41,25 @@ function isTouchDevice() {
   return Boolean(window.matchMedia?.('(hover: none) and (pointer: coarse)').matches || navigator.maxTouchPoints > 0)
 }
 
+function clearLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
+  }
+}
+
 function handleSelect(event) {
-  // A mobile double tap opens details; keep the second tap from toggling the card selection.
-  if (isTouchDevice() && event?.detail === 2) return
-  detailsOpen.value = false
+  // 长按已打开详情 / 滑动翻牌后，吞掉随后的 click，避免误选
+  if (suppressClick) {
+    suppressClick = false
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+  if (detailsOpen.value) {
+    detailsOpen.value = false
+    return
+  }
   if (!props.disabled) emit('select', props.card)
 }
 
@@ -58,35 +81,72 @@ function placeDetails() {
   }
 }
 
-async function openDetails(event) {
+async function openDetails(clientX, clientY) {
   const rect = root.value?.getBoundingClientRect()
-  detailAnchor = { x: event.clientX || rect?.right || 12, y: event.clientY || rect?.top || 12 }
+  detailAnchor = {
+    x: clientX || rect?.right || 12,
+    y: clientY || rect?.top || 12
+  }
   detailsOpen.value = true
   await nextTick()
   placeDetails()
 }
 
-function toggleDetails(event) {
-  event.preventDefault()
-  event.stopPropagation()
-  if (detailsOpen.value) {
-    detailsOpen.value = false
-    return
+function handlePointerDown(event) {
+  // 仅主触点；鼠标右键留给 contextmenu
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  pressMoved = false
+  pressStart = { x: event.clientX, y: event.clientY }
+  clearLongPress()
+
+  // 触屏：长按看详情（不再用双击，避免误触）
+  if (event.pointerType === 'touch' || event.pointerType === 'pen' || isTouchDevice()) {
+    longPressTimer = setTimeout(() => {
+      longPressTimer = null
+      suppressClick = true
+      openDetails(pressStart.x, pressStart.y)
+      try { navigator.vibrate?.(12) } catch { /* ignore */ }
+    }, LONG_PRESS_MS)
   }
-  openDetails(event)
+}
+
+function handlePointerMove(event) {
+  if (!pressStart) return
+  const dx = event.clientX - pressStart.x
+  const dy = event.clientY - pressStart.y
+  if (Math.hypot(dx, dy) >= MOVE_CANCEL_PX) {
+    pressMoved = true
+    clearLongPress()
+  }
+}
+
+function handlePointerUp() {
+  clearLongPress()
+  // 若发生滑动，阻止随后 click 选中卡牌（便于横向翻手牌）
+  if (pressMoved) suppressClick = true
+  pressStart = null
+  pressMoved = false
+}
+
+function handlePointerCancel() {
+  clearLongPress()
+  pressStart = null
+  pressMoved = false
 }
 
 function handleContextMenu(event) {
+  // 桌面右键详情；触屏屏蔽系统菜单，详情改用长按
   event.preventDefault()
-  if (!isTouchDevice()) toggleDetails(event)
-}
-
-function handleDoubleClick(event) {
-  if (isTouchDevice()) toggleDetails(event)
+  if (event.pointerType === 'touch' || isTouchDevice()) return
+  openDetails(event.clientX, event.clientY)
 }
 
 function handleCardKeydown(event) {
-  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') toggleDetails(event)
+  if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+    event.preventDefault()
+    const rect = root.value?.getBoundingClientRect()
+    openDetails(rect?.right || 12, rect?.top || 12)
+  }
 }
 
 function handleDocumentPointerDown(event) {
@@ -111,6 +171,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearLongPress()
   document.removeEventListener('pointerdown', handleDocumentPointerDown)
   document.removeEventListener('keydown', handleDocumentKeydown)
   window.removeEventListener('resize', closeDetails)
@@ -130,9 +191,13 @@ onBeforeUnmount(() => {
     :aria-disabled="disabled"
     :aria-expanded="detailsOpen"
     aria-haspopup="dialog"
-    :title="isTouchDevice() ? '\u53cc\u51fb\u67e5\u770b\u5361\u724c\u8be6\u60c5' : '\u53f3\u952e\u67e5\u770b\u5361\u724c\u8be6\u60c5'"
+    title="单击选择 · 长按查看详情（电脑可右键）"
     @click="handleSelect"
-    @dblclick="handleDoubleClick"
+    @pointerdown="handlePointerDown"
+    @pointermove="handlePointerMove"
+    @pointerup="handlePointerUp"
+    @pointercancel="handlePointerCancel"
+    @pointerleave="handlePointerCancel"
     @keydown="handleCardKeydown"
     @contextmenu="handleContextMenu"
   >
@@ -142,12 +207,12 @@ onBeforeUnmount(() => {
         <i class="orb orb-one"></i><i class="orb orb-two"></i><i class="sigil"></i>
       </span>
       <span class="card-copy">
-        <span class="card-kicker">{{ rarityName[card.rarity] }} &#183; {{ meta.label }}</span>
+        <span class="card-kicker">{{ rarityName[card.rarity] }} · {{ meta.label }}</span>
         <strong>{{ card.name }}</strong>
         <span class="card-effect">{{ card.effect }}</span>
       </span>
-      <span v-if="card.type === 'UNIT'" class="card-stats"><b>&#x6218; {{ card.power }}</b><b>&#x5b88; {{ card.guard }}</b></span>
-      <span v-else-if="card.type === 'SITE'" class="card-stats"><b>&#x5206; {{ card.points }}</b><b>&#x5b88; {{ card.guard }}</b></span>
+      <span v-if="card.type === 'UNIT'" class="card-stats"><b>战 {{ card.power }}</b><b>守 {{ card.guard }}</b></span>
+      <span v-else-if="card.type === 'SITE'" class="card-stats"><b>分 {{ card.points }}</b><b>守 {{ card.guard }}</b></span>
     </span>
   </button>
 
@@ -159,20 +224,21 @@ onBeforeUnmount(() => {
         class="card-detail-popup"
         :style="detailStyle"
         role="dialog"
-        aria-label="&#x5361;&#x724c;&#x8be6;&#x7ec6;&#x4fe1;&#x606f;"
+        aria-label="卡牌详细信息"
         @contextmenu.prevent
+        @click.stop
       >
-        <small>{{ rarityName[card.rarity] }} &#183; {{ meta.label }}</small>
+        <small>{{ rarityName[card.rarity] }} · {{ meta.label }}</small>
         <strong>{{ card.name }}</strong>
         <p>{{ card.effect }}</p>
-        <blockquote v-if="card.flavor" class="card-detail-flavor">&#x201c;{{ card.flavor }}&#x201d;</blockquote>
+        <blockquote v-if="card.flavor" class="card-detail-flavor">“{{ card.flavor }}”</blockquote>
         <div v-if="detailStats.length" class="card-detail-stats">
           <b v-for="stat in detailStats" :key="stat">{{ stat }}</b>
         </div>
         <div v-if="card.tags?.length" class="card-detail-tags">
           <span v-for="tag in card.tags" :key="tag">#{{ tag }}</span>
         </div>
-        <em>&#x70b9;&#x51fb;&#x7a7a;&#x767d;&#x5904;&#x6216;&#x6309;&#x45;&#x73;&#x63;&#x5173;&#x95ed;</em>
+        <em>点空白处或按 Esc 关闭 · 手机可长按查看</em>
       </div>
     </transition>
   </Teleport>

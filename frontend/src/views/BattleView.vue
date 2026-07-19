@@ -1347,7 +1347,7 @@ const tutorialCurriculum = [
       '✺ 秘策：条件苛刻、威力大，每局限一次',
       '费用在左上角金圈；灵力不够会发灰，可弃牌或等下回合'
     ],
-    tip: '桌面右键 / 手机双击卡牌可看详细效果。',
+    tip: '桌面右键 / 手机长按卡牌可看详细效果。',
     practice: false
   },
   {
@@ -1722,7 +1722,7 @@ function siteSvgY(site) {
       <section class="hand-area">
         <div v-if="forcedDiscarding" class="discard-warning forced-discard-warning">&#x56de;&#x5408;&#x7ed3;&#x7b97;&#x4e2d;&#xff1a;&#x8fd8;&#x9700;&#x5f03;&#x7f6e; {{ handOverflow }} &#x5f20;&#x624b;&#x724c;</div>
         <div v-else-if="handOverflow" class="hand-limit-note">&#x672c;&#x56de;&#x5408;&#x53ef;&#x7ee7;&#x7eed;&#x884c;&#x52a8;&#xff0c;&#x7ed3;&#x675f;&#x56de;&#x5408;&#x65f6;&#x9700;&#x5f03;&#x724c;</div>
-        <div class="hand-caption"><span>&#x4f60;&#x7684;&#x624b;&#x724c;</span><b>{{ hand.length }} / 7</b><small>&#x684c;&#x9762;&#x7aef;&#x53f3;&#x952e;&#xff0c;&#x79fb;&#x52a8;&#x7aef;&#x53cc;&#x51fb;&#x67e5;&#x770b;&#x8be6;&#x60c5;</small></div>
+        <div class="hand-caption"><span>你的手牌</span><b>{{ hand.length }} / 7</b><small>单击选择 · 长按详情 · 左右滑动翻牌</small></div>
         <TransitionGroup name="hand-card" tag="div" class="hand-cards">
           <GameCard
             v-for="(card, i) in hand"

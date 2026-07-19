@@ -1562,3 +1562,52 @@ button,a{transition-property:color,background-color,border-color,box-shadow,opac
   .tutorial-practice-avatar{width:44px;height:56px}
   .tutorial-bullets li{font-size:13px!important}
 }
+
+/* Mobile hand: horizontal scroll must work on cards */
+.hand-area{
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+.hand-cards{
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x !important;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+.hand-cards .game-card,
+.hand-cards .game-card.compact{
+  touch-action: pan-x !important;
+  /* prevent browser treating card drag as page gesture */
+  user-select: none;
+  -webkit-user-select: none;
+}
+.hand-cards .game-card:active{
+  /* keep scroll smooth; slight press only */
+  transform: translateY(-2px) scale(.99) !important;
+}
+@media(max-width:720px){
+  .hand-area{
+    touch-action: pan-x;
+    /* leave room; don't clip horizontal scroll */
+    overflow: visible;
+  }
+  .hand-cards{
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    touch-action: pan-x !important;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 76px !important;
+    padding-left: 10px !important;
+  }
+  /* SSR purple cards should not look "more clickable" or block scroll */
+  .hand-cards .game-card.rarity-ssr,
+  .hand-cards .game-card.rarity-sr{
+    touch-action: pan-x !important;
+  }
+  .card-detail-popup{
+    max-width: min(320px, calc(100vw - 24px));
+    font-size: 14px;
+  }
+}
