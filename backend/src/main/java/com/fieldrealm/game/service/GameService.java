@@ -14,7 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class GameService {
-    static final int PHASE_DURATION_SECONDS = 30;
+    static final int PHASE_DURATION_SECONDS = 60;
     private final CardCatalogService catalog;
     private final SimpMessagingTemplate messaging;
     private final Map<String, GameState> matches = new ConcurrentHashMap<>();
@@ -68,10 +68,10 @@ public class GameService {
             game.setStatusText("房间已创建，等待另一位执棋者加入");
             log(game, player.getName() + " 创建了" + game.getBoardSize() + "×" + game.getBoardSize() + "对局");
         } else {
-            player.setEnergy(3);
+            player.setEnergy(turnEnergy(game));
             startPhase(game, GamePhase.DEPLOY);
-            game.setStatusText("先部署至少一张场地；部署阶段限时30秒，超时自动推进");
-            log(game, "初始部署开始 · " + player.getName() + " 获得3点灵力");
+            game.setStatusText("先部署至少一张场地；部署阶段限时60秒，超时自动推进");
+            log(game, "初始部署开始 · " + player.getName() + " 获得" + turnEnergy(game) + "点灵力");
         }
         return game;
     }
@@ -90,10 +90,10 @@ public class GameService {
         initializePlayer(opponent);
         game.setWaitingForOpponent(false);
         game.setActivePlayerIndex(0);
-        host.setEnergy(3);
+        host.setEnergy(turnEnergy(game));
         startPhase(game, GamePhase.DEPLOY);
         game.setStatusText("双方已就位，部署阶段开始");
-        log(game, opponent.getName() + " 加入对局 · 双方各有30秒部署时间");
+        log(game, opponent.getName() + " 加入对局 · 双方各有60秒部署时间");
         publish(game);
         return game;
     }
@@ -105,6 +105,8 @@ public class GameService {
     }
 
     private int normalizeBoardSize(int size) { return size == 4 || size == 5 ? size : 3; }
+    private int turnEnergy(GameState game) { return normalizeBoardSize(game.getBoardSize()); }
+    private int maxRounds(GameState game) { return turnEnergy(game) * 3; }
 
     private List<SiteState> createSites(int size) {
         List<SiteState> result = new ArrayList<>();
@@ -142,7 +144,6 @@ public class GameService {
         ensurePlayable(game);
         PlayerState player = requireActive(game, request.playerId());
         CardDefinition card = catalog.require(request.cardId());
-        if (player.getHand().size() > 7) throw new IllegalArgumentException("\u624b\u724c\u8d85\u8fc77\u5f20\uff0c\u8bf7\u5148\u5f03\u724c");
         if (!player.getHand().contains(card.id())) throw new IllegalArgumentException("该卡牌不在手牌中");
         if (player.getEnergy() < card.cost()) throw new IllegalArgumentException("灵力不足");
         if (game.getPhase() != GamePhase.DEPLOY && card.type() != CardType.SPELL) {
@@ -241,7 +242,11 @@ public class GameService {
     public synchronized GameState endTurn(String matchId, String playerId) {
         GameState game = get(matchId);
         requireActive(game, playerId);
-        if (playerHandOverflow(game)) throw new IllegalArgumentException("\u624b\u724c\u8d85\u8fc77\u5f20\uff0c\u8bf7\u5148\u5f03\u724c");
+        int autoDiscarded = enforceHandLimit(game.activePlayer());
+        if (autoDiscarded > 0) {
+            game.setStatusText("\u624b\u724c\u8d85\u8fc77\u5f20\uff0c\u7cfb\u7edf\u81ea\u52a8\u5f03\u7f6e " + autoDiscarded + " \u5f20");
+            log(game, game.activePlayer().getName() + " \u672a\u4e3b\u52a8\u5f03\u724c\uff0c\u7cfb\u7edf\u81ea\u52a8\u5f03\u7f6e " + autoDiscarded + " \u5f20");
+        }
         if (!game.isInitialContestResolved()) return completeInitialDeployment(game);
 
         settle(game);
@@ -309,7 +314,7 @@ public class GameService {
         GameState game = get(matchId);
         ensurePlayable(game);
         PlayerState player = requireActive(game, playerId);
-        if (game.getPhase() != GamePhase.DEPLOY) throw new IllegalArgumentException("只能在部署阶段弃牌");
+        if (game.getPhase() != GamePhase.DEPLOY && game.getPhase() != GamePhase.CONTEST) throw new IllegalArgumentException("\u53ea\u80fd\u5728\u90e8\u7f72\u6216\u4e89\u593a\u9636\u6bb5\u5f03\u724c");
         if (!player.getHand().remove(cardId)) throw new IllegalArgumentException("手牌中没有这张卡");
         player.getDiscard().add(cardId);
         game.setStatusText("已主动弃置「" + catalog.require(cardId).name() + "」");
@@ -434,10 +439,11 @@ public class GameService {
             finish(game, domination.get().getId(), "场地绝杀");
             return;
         }
-        if (game.getTurnNumber() >= 16) {
+        int roundLimit = maxRounds(game);
+        if (game.getTurnNumber() >= roundLimit * 2) {
             PlayerState a = game.getPlayers().get(0), b = game.getPlayers().get(1);
-            if (a.getScore() == b.getScore()) finish(game, "DRAW", "积分平局");
-            else finish(game, a.getScore() > b.getScore() ? a.getId() : b.getId(), "八回合积分结算");
+            if (a.getScore() == b.getScore()) finish(game, "DRAW", "\u79ef\u5206\u5e73\u5c40");
+            else finish(game, a.getScore() > b.getScore() ? a.getId() : b.getId(), roundLimit + "\u56de\u5408\u79ef\u5206\u7ed3\u7b97");
         }
     }
 
@@ -454,16 +460,24 @@ public class GameService {
             }
         }
         PlayerState active = game.activePlayer();
-        active.setEnergy(3);
+        active.setEnergy(turnEnergy(game));
         draw(active, 2);
-        if (game.getMode().equals("AI") && game.getActivePlayerIndex() == 1) enforceHandLimit(active);
         game.setStatusText(active.getName() + " 的部署阶段");
-        log(game, "第" + game.getRound() + "回合 · " + active.getName() + " 获得3点灵力并抽2张牌");
+        log(game, "第" + game.getRound() + "回合 · " + active.getName() + " 获得" + turnEnergy(game) + "点灵力并抽2张牌");
     }
 
     private void runAiTurn(GameState game) {
         runAiDeployment(game);
         runAiContest(game);
+        int autoDiscarded = enforceHandLimit(game.activePlayer());
+        if (autoDiscarded > 0) {
+            game.setStatusText(game.activePlayer().getName() + " \u56de\u5408\u7ed3\u675f\uff0c\u7cfb\u7edf\u81ea\u52a8\u5f03\u7f6e " + autoDiscarded + " \u5f20\u724c");
+            log(game, game.activePlayer().getName() + " \u672a\u4e3b\u52a8\u5f03\u724c\uff0c\u7cfb\u7edf\u81ea\u52a8\u5f03\u7f6e " + autoDiscarded + " \u5f20\u724c");
+            publish(game);
+            aiPause(500);
+        }
+        game.setStatusText(game.activePlayer().getName() + " \u7ed3\u675f\u4e86\u56de\u5408");
+        log(game, game.activePlayer().getName() + " \u7ed3\u675f\u56de\u5408\uff0c\u5f00\u59cb\u7ed3\u7b97");
         settle(game);
         publish(game);
     }
@@ -547,7 +561,7 @@ public class GameService {
             game.setActivePlayerIndex(1);
             resetPhaseDeadline(game);
             PlayerState ai = game.activePlayer();
-            ai.setEnergy(3);
+            ai.setEnergy(turnEnergy(game));
             game.setStatusText("你已完成初始部署 · " + ai.getName() + " 正在布置场地");
             log(game, current.getName() + " 完成初始部署，行动交给 " + ai.getName());
             publish(game);
@@ -555,7 +569,7 @@ public class GameService {
         } else if (!bothPlayersHaveSites(game)) {
             game.setActivePlayerIndex(1 - game.getActivePlayerIndex());
             resetPhaseDeadline(game);
-            game.activePlayer().setEnergy(3);
+            game.activePlayer().setEnergy(turnEnergy(game));
             game.setStatusText(game.activePlayer().getName() + " 的初始部署阶段");
             publish(game);
             return game;
@@ -576,6 +590,7 @@ public class GameService {
             game.setStatusText(starter.getName() + " 获得先手，开始第一次争夺");
             publish(game);
             runAiContest(game);
+            enforceHandLimit(game.activePlayer());
             settle(game);
             if (game.getPhase() != GamePhase.FINISHED) advanceTurn(game);
         } else {
@@ -731,7 +746,7 @@ public class GameService {
 
     private void finish(GameState game, String winnerId, String type) {
         game.setWinnerId(winnerId); game.setVictoryType(type); startPhase(game, GamePhase.FINISHED);
-        game.setStatusText("DRAW".equals(winnerId) ? "八回合结束，双方平分秋色" : playerById(game, winnerId).getName() + " 以「" + type + "」获胜");
+        game.setStatusText("DRAW".equals(winnerId) ? maxRounds(game) + "\u56de\u5408\u7ed3\u675f\uff0c\u53cc\u65b9\u5e73\u5206\u79cb\u8272" : playerById(game, winnerId).getName() + " \u4ee5\u300c" + type + "\u300d\u83b7\u80dc");
         log(game, "对局结束 · " + game.getStatusText());
         if (game.isRanked() && !game.isRankedResultRecorded() && auth != null && !"DRAW".equals(winnerId)) {
             PlayerState winner = playerById(game, winnerId);
@@ -795,7 +810,14 @@ public class GameService {
         }
     }
     private void draw(PlayerState p, int amount) { for (int i = 0; i < amount && !p.getDeck().isEmpty(); i++) p.getHand().add(p.getDeck().remove(0)); }
-    private void enforceHandLimit(PlayerState p) { while (p.getHand().size() > 7) p.getDiscard().add(p.getHand().remove(p.getHand().size() - 1)); }
+    private int enforceHandLimit(PlayerState p) {
+        int discarded = 0;
+        while (p.getHand().size() > 7) {
+            p.getDiscard().add(p.getHand().remove(p.getHand().size() - 1));
+            discarded++;
+        }
+        return discarded;
+    }
     private void log(GameState game, String line) { game.getLog().add(0, line); if (game.getLog().size() > 30) game.getLog().remove(game.getLog().size() - 1); }
     private void aiPause(long millis) { /* AI steps are published immediately; the client animates them. */ }
     private void publish(GameState game) { game.setUpdatedAt(Instant.now()); messaging.convertAndSend("/topic/matches/" + game.getId(), game); }

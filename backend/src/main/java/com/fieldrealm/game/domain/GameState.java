@@ -31,7 +31,7 @@ public class GameState {
     private List<String> log = new ArrayList<>();
     private Instant updatedAt = Instant.now();
     private Instant phaseEndsAt;
-    private int phaseDurationSeconds = 30;
+    private int phaseDurationSeconds = 60;
 
     public PlayerState activePlayer() { return players.get(activePlayerIndex); }
     public PlayerState opponent() { return players.get(1 - activePlayerIndex); }

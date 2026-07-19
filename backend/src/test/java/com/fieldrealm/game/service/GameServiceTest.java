@@ -40,6 +40,21 @@ class GameServiceTest {
     }
 
     @Test
+    void boardSizeControlsEnergyGrantedAtMatchStartAndEveryTurn() {
+        GameState fourByFour = games.create("AI", "Tester", 4, null, false);
+        assertThat(fourByFour.getPlayers().get(0).getEnergy()).isEqualTo(4);
+
+        fourByFour.setInitialContestResolved(true);
+        fourByFour.setPhase(GamePhase.CONTEST);
+        fourByFour.setMode("PVP");
+        games.endTurn(fourByFour.getId(), "p1");
+        assertThat(fourByFour.getPlayers().get(1).getEnergy()).isEqualTo(4);
+
+        GameState fiveByFive = games.create("AI", "Tester", 5, null, false);
+        assertThat(fiveByFive.getPlayers().get(0).getEnergy()).isEqualTo(5);
+    }
+
+    @Test
     void initiativeDiceRollsOnlyAfterBothPlayersFinishDeployment() {
         for (int i = 0; i < 40; i++) {
             GameState game = games.create("AI", "Tester");
@@ -162,6 +177,89 @@ class GameServiceTest {
         games.endTurn(game.getId(), "p1");
 
         assertThat(game.getSites().get(2).getOwnerId()).isEqualTo("p1");
+    }
+
+    @Test
+    void phasesUseSixtySecondDeadline() {
+        GameState game = games.create("AI", "Tester");
+
+        assertThat(GameService.PHASE_DURATION_SECONDS).isEqualTo(60);
+        assertThat(game.getPhaseDurationSeconds()).isEqualTo(60);
+    }
+
+    @Test
+    void boardSizeControlsTheMaximumRoundCount() {
+        GameState game = games.create("AI", "Tester", 4, null, false);
+        game.setInitialContestResolved(true);
+        game.setPhase(GamePhase.CONTEST);
+        game.setMode("PVP");
+        game.setTurnNumber(24); // 12 rounds * 2 player turns
+
+        games.endTurn(game.getId(), "p1");
+
+        assertThat(game.getPhase()).isEqualTo(GamePhase.FINISHED);
+        assertThat(game.getVictoryType()).isEqualTo("\u79ef\u5206\u5e73\u5c40");
+        assertThat(game.getStatusText()).contains("12\u56de\u5408");
+    }
+
+    @Test
+    void playerCanStillPlayCardsBeforeEndingAnOverflowingTurn() {
+        GameState game = games.create("AI", "Tester");
+        String siteId = "site-verdant";
+        game.getPlayers().get(0).getHand().clear();
+        for (int i = 0; i < 8; i++) game.getPlayers().get(0).getHand().add(siteId);
+        game.getPlayers().get(0).setEnergy(99);
+
+        games.playCard(game.getId(), new PlayCardRequest("p1", siteId, 0, null));
+
+        assertThat(game.getSites().get(0).getOwnerId()).isEqualTo("p1");
+        assertThat(game.getPlayers().get(0).getHand()).hasSize(7);
+    }
+
+    @Test
+    void overflowingHandIsAutoDiscardedWhenTurnEnds() {
+        GameState game = games.create("AI", "Tester");
+        String cardId = game.getPlayers().get(0).getHand().get(0);
+        while (game.getPlayers().get(0).getHand().size() < 8) {
+            game.getPlayers().get(0).getHand().add(cardId);
+        }
+        game.setInitialContestResolved(true);
+        game.setPhase(GamePhase.CONTEST);
+        game.setMode("PVP");
+
+        games.endTurn(game.getId(), "p1");
+
+        assertThat(game.getPlayers().get(0).getHand()).hasSize(7);
+        assertThat(game.getPlayers().get(0).getDiscard()).contains(cardId);
+    }
+
+    @Test
+    void overflowingHandIsAutoDiscardedDownToSevenCards() {
+        GameState game = games.create("AI", "Tester");
+        String cardId = game.getPlayers().get(0).getHand().get(0);
+        while (game.getPlayers().get(0).getHand().size() < 10) {
+            game.getPlayers().get(0).getHand().add(cardId);
+        }
+        game.setInitialContestResolved(true);
+        game.setPhase(GamePhase.CONTEST);
+        game.setMode("PVP");
+
+        games.endTurn(game.getId(), "p1");
+
+        assertThat(game.getPlayers().get(0).getHand()).hasSize(7);
+        assertThat(game.getPlayers().get(0).getDiscard()).hasSize(3);
+    }
+
+    @Test
+    void playerCanDiscardDuringContestToResolveEndTurnHandLimit() {
+        GameState game = games.create("AI", "Tester");
+        String cardId = game.getPlayers().get(0).getHand().get(0);
+        game.setPhase(GamePhase.CONTEST);
+
+        games.discard(game.getId(), "p1", cardId);
+
+        assertThat(game.getPlayers().get(0).getHand()).doesNotContain(cardId);
+        assertThat(game.getPlayers().get(0).getDiscard()).contains(cardId);
     }
 
     private String openingSiteId(GameState game) {

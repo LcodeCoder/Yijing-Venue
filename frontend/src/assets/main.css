@@ -780,3 +780,215 @@ button,a{transition-property:color,background-color,border-color,box-shadow,opac
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.route-view-enter-active,.route-view-leave-active{transition:opacity .01s}.route-view-enter-from,.route-view-leave-to{transform:none;filter:none}.curtain-panel{transition-duration:.01s!important}.curtain-seal{transition-duration:.01s!important}.round-meter b.urgent,.round-meter b.urgent em{animation:none!important}.battlefield-viewport:after{display:none}}
 
 .exit-confirm-card .exit-confirm-error{margin:12px 0 0;padding:9px 11px;border-radius:8px;color:#ffc2bb;background:rgba(209,111,111,.12);border:1px solid rgba(209,111,111,.28);font-size:12px;line-height:1.5}
+
+
+/* Card readability, hand fan, and a slightly roomier battlefield. */
+.card-frame{display:flex;flex:1;min-height:0;flex-direction:column;width:100%;height:100%}
+.game-card.details-open{z-index:240}
+.card-detail-popup{position:fixed;z-index:500;width:min(294px,calc(100vw - 24px));padding:16px 17px 14px;border:1px solid color-mix(in srgb,var(--type-color,#63d2a5) 50%,rgba(255,255,255,.2));border-radius:10px;background:rgba(3,9,8,.94);box-shadow:0 18px 48px rgba(0,0,0,.58),0 0 28px color-mix(in srgb,var(--type-color,#63d2a5) 15%,transparent);backdrop-filter:blur(12px);color:var(--ink);pointer-events:auto;text-align:left}
+.card-detail-popup:before{content:"";position:absolute;inset:4px;border:1px solid color-mix(in srgb,var(--type-color,#63d2a5) 18%,transparent);border-radius:7px;pointer-events:none}
+.card-detail-popup>*{position:relative;z-index:1}.card-detail-popup small{display:block;color:var(--type-color,#63d2a5);font-size:10px;letter-spacing:.12em;text-transform:uppercase}.card-detail-popup strong{display:block;margin:6px 0 9px;font:600 17px/1.25 "Noto Serif SC","Microsoft YaHei",serif;color:#f4fbf7}.card-detail-popup p{margin:0;color:#d6e3dd;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.card-detail-flavor{margin:10px 0 0;padding:9px 10px;border-left:2px solid color-mix(in srgb,var(--type-color,#63d2a5) 48%,transparent);background:rgba(255,255,255,.035);color:rgba(222,235,228,.68);font:italic 11px/1.6 "Noto Serif SC","Microsoft YaHei",serif}.card-detail-stats{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.card-detail-stats b{padding:5px 8px;border:1px solid rgba(255,255,255,.13);border-radius:5px;color:var(--gold);font-size:11px}.card-detail-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}.card-detail-tags span{padding:3px 7px;border-radius:999px;background:color-mix(in srgb,var(--type-color,#63d2a5) 10%,transparent);color:#b9f1d7;font-size:10px}.card-detail-popup em{display:block;margin-top:12px;color:rgba(233,243,237,.46);font-size:10px;font-style:normal}.card-detail-pop-enter-active,.card-detail-pop-leave-active{transition:opacity .16s ease,transform .16s ease}.card-detail-pop-enter-from,.card-detail-pop-leave-to{opacity:0;transform:translateY(5px) scale(.97)}
+.hand-cards{gap:0;align-items:flex-end;overflow-y:visible;padding-left:20px;padding-right:24px}.hand-cards .game-card{margin-left:var(--fan-overlap,0px);transform:rotate(var(--fan-rotate,0deg)) translateY(var(--fan-lift,0px));transform-origin:50% 100%;will-change:transform}.hand-cards .game-card:first-child{margin-left:8px}.hand-cards .game-card:hover{transform:rotate(var(--fan-rotate,0deg)) translateY(calc(var(--fan-lift,0px) - 12px)) scale(1.03);z-index:230!important}.hand-cards .game-card.selected{transform:rotate(var(--fan-rotate,0deg)) translateY(calc(var(--fan-lift,0px) - 17px)) scale(1.04);z-index:240!important}.hand-cards .game-card:active{transform:rotate(var(--fan-rotate,0deg)) translateY(calc(var(--fan-lift,0px) - 7px)) scale(.98)!important}.hand-limit-note{position:absolute;top:-24px;left:50%;transform:translateX(-50%);padding:5px 13px;border:1px solid rgba(239,195,111,.24);border-radius:5px;background:rgba(50,38,18,.82);color:#ffe8b0;font-size:8px;white-space:nowrap}.forced-discard-warning{border:1px solid rgba(255,152,152,.48);border-radius:5px;box-shadow:0 0 22px rgba(209,111,111,.18);font-weight:800;white-space:nowrap}
+@media(min-width:701px){.battle-page{height:auto;min-height:max(100dvh,820px);overflow-x:hidden;overflow-y:auto;grid-template-rows:54px 66px minmax(390px,1fr) 70px 240px}.battlefield{min-height:390px}}
+@media(max-width:700px){.hand-cards{gap:0;padding-left:12px;padding-right:74px}.hand-cards .game-card{margin-left:-18px;transform:rotate(var(--fan-rotate-mobile,var(--fan-rotate,0deg))) translateY(var(--fan-lift-mobile,var(--fan-lift,0px)));transform-origin:50% 100%}.hand-cards .game-card:first-child{margin-left:10px}.hand-cards .game-card:hover{transform:rotate(var(--fan-rotate-mobile,var(--fan-rotate,0deg))) translateY(calc(var(--fan-lift-mobile,var(--fan-lift,0px)) - 9px)) scale(1.02)}.hand-cards .game-card.selected{transform:rotate(var(--fan-rotate-mobile,var(--fan-rotate,0deg))) translateY(calc(var(--fan-lift-mobile,var(--fan-lift,0px)) - 13px)) scale(1.03)}.card-detail-popup{padding:14px 15px 13px}.card-detail-popup strong{font-size:16px}.card-detail-popup p{font-size:12px;line-height:1.6}.hand-limit-note,.forced-discard-warning{max-width:calc(100vw - 24px);overflow:hidden;text-overflow:ellipsis}}
+
+
+/* Readable board scale + centered card fan. The board intentionally grows beyond a short viewport. */
+@media (min-width: 701px) {
+  .battle-page {
+    height: auto;
+    min-height: max(100dvh, 1120px);
+    /* Do not create a nested page scroller: only the document scrolls. */
+    overflow: clip;
+    grid-template-rows: 54px 66px minmax(680px, 1fr) 70px 230px;
+  }
+  .battlefield { min-height: 680px; }
+  .hand-area { min-height: 230px; }
+}
+
+.hand-cards {
+  justify-content: center;
+  overflow: visible;
+  min-width: 0;
+  padding-top: 48px;
+  padding-bottom: 10px;
+}
+.hand-cards .game-card {
+  flex: 0 0 auto;
+  position: relative;
+  margin-left: var(--fan-overlap, 0px);
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(var(--fan-lift, 0px));
+  transform-origin: 50% 100%;
+  transition: transform .2s ease, filter .2s ease, opacity .2s ease;
+}
+.hand-cards .game-card:first-child { margin-left: 0; }
+.hand-cards .game-card:hover {
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(calc(var(--fan-lift, 0px) - 18px)) scale(1.045);
+  z-index: 230 !important;
+}
+.hand-cards .game-card.selected {
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(calc(var(--fan-lift, 0px) - 23px)) scale(1.055);
+  z-index: 240 !important;
+}
+
+@media (max-width: 700px) {
+  .battle-page { min-height: 0; }
+  .battlefield { height: 800px; }
+  .hand-cards {
+    height: 174px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 34px 72px 0 28px;
+  }
+  .hand-cards .game-card {
+    margin-left: var(--fan-overlap, -32px);
+    transform: rotate(var(--fan-rotate-mobile, 0deg)) translateY(var(--fan-lift-mobile, 0px));
+  }
+  .hand-cards .game-card:first-child { margin-left: 8px; }
+  .hand-cards .game-card:hover {
+    transform: rotate(var(--fan-rotate-mobile, 0deg)) translateY(calc(var(--fan-lift-mobile, 0px) - 12px)) scale(1.035);
+  }
+  .hand-cards .game-card.selected {
+    transform: rotate(var(--fan-rotate-mobile, 0deg)) translateY(calc(var(--fan-lift-mobile, 0px) - 16px)) scale(1.045);
+  }
+}
+
+@media (max-width: 410px) {
+  .battlefield { height: 760px; }
+}
+
+
+/* Final battle layout polish: one document scroller, taller readable field, unmistakable hand fan. */
+@media (min-width: 701px) {
+  .battle-page {
+    height: auto;
+    min-height: max(100dvh, 1120px);
+    overflow: clip;
+    grid-template-rows: 54px 66px minmax(680px, 1fr) 70px 230px;
+  }
+  .battlefield { min-height: 680px; }
+  .hand-area { min-height: 230px; }
+}
+
+.hand-cards {
+  position: relative;
+  justify-content: center;
+  align-items: flex-end;
+  overflow: visible;
+  padding: 58px 28px 8px;
+  isolation: isolate;
+}
+.hand-cards .game-card {
+  flex: 0 0 auto;
+  position: relative;
+  margin-left: var(--fan-overlap, 0px);
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(var(--fan-lift, 0px));
+  transform-origin: 50% 100%;
+  transition: transform .24s cubic-bezier(.22,1,.36,1), filter .2s ease, opacity .2s ease;
+  will-change: transform;
+}
+.hand-cards .game-card:first-child { margin-left: 0; }
+.hand-cards .game-card:hover {
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(calc(var(--fan-lift, 0px) - 20px)) scale(1.045);
+  z-index: 230 !important;
+}
+.hand-cards .game-card.selected {
+  transform: rotate(var(--fan-rotate, 0deg)) translateY(calc(var(--fan-lift, 0px) - 26px)) scale(1.055);
+  z-index: 240 !important;
+}
+.hand-cards .game-card:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 3px;
+}
+
+.ai-action-banner { animation: aiActionIn .5s cubic-bezier(.15,1.3,.25,1), aiBannerBreath 2.4s ease-in-out .5s infinite; }
+.ai-action-icon { animation: aiIconPulse 1.4s ease-in-out infinite; }
+.placement-flight .flight-trail { animation: flightTrailPulse .55s ease-in-out infinite alternate; }
+@keyframes aiBannerBreath { 50% { box-shadow: 0 18px 50px rgba(0,0,0,.46), 0 0 34px rgba(239,195,111,.16); } }
+@keyframes aiIconPulse { 50% { transform: scale(1.08) rotate(-4deg); filter: brightness(1.25); } }
+@keyframes flightTrailPulse { to { opacity: .95; transform: scaleX(1.08); } }
+
+@media (max-width: 700px) {
+  .battle-page {
+    height: auto;
+    min-height: 0;
+    overflow: clip;
+  }
+  .battlefield { height: 800px; }
+  .hand-cards {
+    height: 174px;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 42px 72px 0 28px;
+  }
+  .hand-cards .game-card {
+    margin-left: var(--fan-overlap, -34px);
+    transform: rotate(var(--fan-rotate-mobile, var(--fan-rotate, 0deg))) translateY(var(--fan-lift-mobile, var(--fan-lift, 0px)));
+  }
+  .hand-cards .game-card:first-child { margin-left: 8px; }
+  .hand-cards .game-card:hover {
+    transform: rotate(var(--fan-rotate-mobile, var(--fan-rotate, 0deg))) translateY(calc(var(--fan-lift-mobile, var(--fan-lift, 0px)) - 13px)) scale(1.035);
+  }
+  .hand-cards .game-card.selected {
+    transform: rotate(var(--fan-rotate-mobile, var(--fan-rotate, 0deg))) translateY(calc(var(--fan-lift-mobile, var(--fan-lift, 0px)) - 17px)) scale(1.045);
+  }
+}
+
+@media (max-width: 410px) {
+  .battlefield { height: 760px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-action-banner, .ai-action-icon, .placement-flight .flight-trail { animation: none !important; }
+}
+
+/* Interaction focus: the page scrolls until the battlefield is explicitly focused. */
+.battlefield-viewport {
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior: auto;
+  cursor: default;
+}
+.battlefield-viewport.board-interaction-active {
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: grab;
+  border-color: rgba(99,210,165,.32);
+  box-shadow: inset 0 0 70px rgba(99,210,165,.06), 0 0 20px rgba(99,210,165,.08);
+}
+.battlefield-viewport.board-interaction-active:focus-visible {
+  outline: 2px solid rgba(239,195,111,.72);
+  outline-offset: -3px;
+}
+.battlefield-viewport:not(.board-interaction-active) .battlefield-canvas {
+  cursor: default;
+}
+
+/* Keep the bottom hand strip compact without cutting off the stat row. */
+@media (min-width: 701px) {
+  .battle-page {
+    min-height: max(100dvh, 1100px);
+    grid-template-rows: 54px 66px minmax(680px, 1fr) 70px 220px;
+  }
+  .hand-area {
+    height: 220px;
+    min-height: 220px;
+    padding: 5px 22px 0;
+  }
+  .hand-cards {
+    height: 220px;
+    padding: 8px 28px 8px;
+  }
+}
+@media (max-width: 700px) {
+  .hand-area {
+    height: 176px;
+    min-height: 176px;
+    padding: 3px 0 0;
+  }
+  .hand-cards {
+    height: 176px;
+    padding: 10px 72px 6px 28px;
+  }
+}

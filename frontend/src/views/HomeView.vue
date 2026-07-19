@@ -170,13 +170,13 @@ onBeforeUnmount(() => { clearInterval(poller); clearInterval(cooldownTimer) })
     <section class="feature-strip">
       <div class="section-wrap feature-grid">
         <article><span><Swords /></span><div><b>无血量策略对抗</b><p>每一次行动都围绕占领、置换与控场展开。</p></div></article>
-        <article><span><ShieldCheck /></span><div><b>双重胜利逻辑</b><p>稳定三场绝杀，或运营八回合赢得积分。</p></div></article>
+        <article><span><ShieldCheck /></span><div><b>双重胜利逻辑</b><p>稳定三场绝杀，或完成对应棋盘的总回合数赢得积分。</p></div></article>
         <article><span><Timer /></span><div><b>10–15 分钟一局</b><p>灵力不留存，决策紧凑，局势快速反转。</p></div></article>
       </div>
     </section>
 
     <section class="section-wrap mode-section">
-      <div class="section-heading"><span>选择你的道路</span><h2>3×3、4×4、5×5 三种弈境</h2><p>所有部署与争夺阶段均限时 30 秒，超时自动推进。</p></div>
+      <div class="section-heading"><span>选择你的道路</span><h2>3×3、4×4、5×5 三种弈境</h2><p>所有部署与争夺阶段均限时 60 秒，超时自动推进。</p></div>
       <div class="board-size-picker"><button v-for="n in [3, 4, 5]" :key="n" :class="{ active: boardSize === n }" @click="boardSize = n">{{ n }}×{{ n }}<small>{{ n === 3 ? '快速' : n === 4 ? '标准' : '史诗' }}</small></button></div>
       <div class="mode-grid expanded">
         <article class="mode-card featured"><div class="mode-icon"><Bot /></div><span class="mode-tag">单人训练</span><h3>秘境试炼</h3><p>与雾隐执棋者对战，熟悉计时部署、场地连线与卡牌组合。</p><button :disabled="creating || cooldownRemaining > 0" @click="start('AI')">立即挑战 <ChevronRight /></button></article>

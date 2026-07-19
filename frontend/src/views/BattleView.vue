@@ -19,6 +19,7 @@ const busy = ref(false)
 const error = ref('')
 const selectedCard = ref(null)
 const selectedUnit = ref(null)
+const forcedDiscarding = ref(false)
 const showLog = ref(false)
 const soundOn = ref(true)
 const pulse = ref('')
@@ -39,6 +40,7 @@ const boardZoom = ref(1)
 const boardPanX = ref(0)
 const boardPanY = ref(0)
 const boardPanning = ref(false)
+const boardInteractionActive = ref(false)
 const boardSettling = ref(false)
 const boardGliding = ref(false)
 const boardFeedbackX = ref(0)
@@ -90,6 +92,7 @@ const rival = computed(() => game.value?.players?.[1 - localPlayerIndex.value])
 const active = computed(() => game.value?.players?.[game.value?.activePlayerIndex])
 const humanTurn = computed(() => !opponentFxBusy.value && !game.value?.waitingForOpponent && active.value?.id === localPlayerId.value && game.value?.phase !== 'FINISHED')
 const hand = computed(() => player.value?.hand?.map(id => cardMap.value[id]).filter(Boolean) || [])
+const handOverflow = computed(() => Math.max(0, hand.value.length - 7))
 const playerReady = computed(() => Boolean(game.value?.sites?.some(site => site.ownerId === localPlayerId.value)))
 const rivalReady = computed(() => Boolean(game.value?.sites?.some(site => site.ownerId === rivalPlayerId.value)))
 const initialDeployment = computed(() => !game.value?.initialContestResolved)
@@ -99,7 +102,10 @@ const contestStarter = computed(() => game.value?.players?.[game.value?.contestS
 const boardTransform = computed(() => `translate3d(${boardPanX.value}px, ${boardPanY.value}px, 0) scale(${boardZoom.value})`)
 const boardFeedbackStyle = computed(() => ({ '--drag-glow-x': `${50 - boardFeedbackX.value * 42}%`, '--drag-glow-y': `${50 - boardFeedbackY.value * 42}%`, '--drag-strength': Math.min(1, Math.hypot(boardFeedbackX.value, boardFeedbackY.value)).toFixed(2) }))
 const boardZoomLabel = computed(() => `${Math.round(boardZoom.value * 100)}%`)
+const maxRounds = computed(() => Math.max(3, Number(game.value?.boardSize || 3) * 3))
+const roundProgress = computed(() => Math.min(100, ((Number(game.value?.turnNumber || 1) / (maxRounds.value * 2)) * 100)))
 const targetMode = computed(() => {
+  if (forcedDiscarding.value) return ''
   if (selectedCard.value) {
     if (['SITE', 'UNIT'].includes(selectedCard.value.type)) return 'site'
     if (['SEAL', 'SURGE', 'REINFORCE', 'RANGE', 'REFRESH'].includes(selectedCard.value.effectCode)) return 'unit'
@@ -113,6 +119,7 @@ const instruction = computed(() => {
   if (game.value.waitingForOpponent) return `\u623f\u95f4\u53f7 ${game.value.id} \u00b7 \u7b49\u5f85\u53e6\u4e00\u4f4d\u73a9\u5bb6\u52a0\u5165`
   if (game.value.phase === 'FINISHED') return game.value.statusText
   if (!humanTurn.value) return initialDeployment.value ? '对手正在完成初始布阵，完成后才会开启争夺' : '雾隐执棋者正在推演局势…'
+  if (forcedDiscarding.value) return `\u56de\u5408\u7ed3\u675f\uff1a\u8bf7\u4ece\u624b\u724c\u4e2d\u5f03\u7f6e ${handOverflow.value} \u5f20\u724c`
   if (initialDeployment.value && bothInitialSitesReady.value) return '双方场地已就位，先手骰将决定第一次争夺顺序'
   if (selectedCard.value) {
     if (selectedCard.value.cost > player.value.energy) return '灵力不足：可在右侧弃置这张牌'
@@ -177,6 +184,7 @@ onMounted(async () => {
     if (game.value.initialContestResolved && game.value.turnNumber === 1 && game.value.playerRoll > 0) showInitiativeFx()
     window.addEventListener('keydown', shortcuts)
     window.addEventListener('beforeunload', warnBeforeUnload)
+    document.addEventListener('pointerdown', handleBoardInteractionOutside)
     countdownTimer = window.setInterval(() => { clock.value = Date.now() }, 250)
   } catch (e) {
     error.value = e.message
@@ -191,6 +199,7 @@ onBeforeUnmount(() => {
   client?.deactivate()
   window.removeEventListener('keydown', shortcuts)
   window.removeEventListener('beforeunload', warnBeforeUnload)
+  document.removeEventListener('pointerdown', handleBoardInteractionOutside)
   clearInterval(countdownTimer)
   clearTimeout(pulseTimer)
   clearTimeout(revealTimer)
@@ -242,6 +251,7 @@ function syncGame(next) {
 
   const initiativeResolved = Boolean(previous && !previous.initialContestResolved && next?.initialContestResolved && next.playerRoll > 0)
   game.value = next
+  if (next?.phase === 'FINISHED' || next?.players?.[next.activePlayerIndex]?.id !== localPlayerId.value) forcedDiscarding.value = false
   if (initiativeResolved) showInitiativeFx()
   if (opponentAction) enqueueOpponentFx(opponentAction)
   if (newCards.length && next.players?.[next.activePlayerIndex]?.id === localPlayerId.value) queueDrawFx(newCards)
@@ -296,6 +306,7 @@ function describeOpponentAction(previous, next) {
       const result = next.statusText || '敌方争夺结算完成'
       const action = {
         kind: 'attack',
+        title: '\u4e89\u593a\u573a\u5730',
         turnNumber: next.turnNumber,
         attacker: { ...attacker, siteName: sourceBefore.siteName },
         target: { ...targetBefore },
@@ -314,6 +325,7 @@ function describeOpponentAction(previous, next) {
   if (newlyDeployedUnit) {
     const action = {
       kind: 'deploy',
+      title: '\u90e8\u7f72\u5355\u4f4d',
       turnNumber: next.turnNumber,
       detail: `${newlyDeployedUnit.name} 已部署至「${newlyDeployedUnit.siteName}」`
     }
@@ -328,6 +340,7 @@ function describeOpponentAction(previous, next) {
   if (claimedSite) {
     const action = {
       kind: 'deploy',
+      title: '\u90e8\u7f72\u573a\u5730',
       turnNumber: next.turnNumber,
       detail: `对手将「${claimedSite.name}」纳入布阵`
     }
@@ -335,13 +348,21 @@ function describeOpponentAction(previous, next) {
     return action
   }
 
-  if (next.statusText && next.statusText !== previous.statusText) {
-    const attack = next.statusText.includes('争夺') || next.statusText.includes('战力')
-    const deploy = next.statusText.includes('部署') || next.statusText.includes('驻场')
+  const latestLog = next.log?.[0] && next.log[0] !== previous.log?.[0] ? next.log[0] : ''
+  if ((next.statusText && next.statusText !== previous.statusText) || latestLog) {
+    const status = String(next.statusText || '')
+    const text = latestLog || status
+    const attack = /\u4e89\u593a|\u6218\u529b/.test(text)
+    const deploy = /\u90e8\u7f72|\u9a7b\u573a|\u5e03\u9635/.test(text)
+    const spell = /\u672f\u5f0f/.test(text)
+    const secret = /\u79d8\u7b56/.test(text)
+    const discard = /\u5f03\u7f6e|\u5f03\u724c/.test(text)
+    const turnEnd = /\u5b8c\u6210\u672c\u56de\u5408|\u56de\u5408\u7ed3\u7b97|\u81ea\u52a8\u8fdb\u5165\u4e89\u593a|\u65f6\u95f4\u8017\u5c3d/.test(text)
     const action = {
-      kind: attack ? 'target' : deploy ? 'deploy' : 'thinking',
+      kind: attack ? 'target' : spell ? 'spell' : secret ? 'secret' : discard ? 'discard' : deploy ? 'deploy' : turnEnd ? 'turn' : 'thinking',
+      title: attack ? '\u4e89\u593a\u76ee\u6807' : spell ? '\u53d1\u52a8\u672f\u5f0f' : secret ? '\u53d1\u52a8\u79d8\u7b56' : discard ? '\u81ea\u52a8\u5f03\u724c' : deploy ? '\u5e03\u7f72\u573a\u5730' : turnEnd ? '\u7ed3\u675f\u56de\u5408' : '\u89c2\u5bdf\u5c40\u52bf',
       turnNumber: next.turnNumber,
-      detail: next.statusText
+      detail: text
     }
     action.key = opponentActionKey(action)
     return action
@@ -362,6 +383,8 @@ function addedCardIds(previousIds, nextIds) {
 
 function shortcuts(e) {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target?.tagName)) return
+  const boardViewShortcut = e.key === '+' || e.key === '=' || e.key === '-' || e.key === '0'
+  if (boardViewShortcut && !boardInteractionActive.value) return
   if (e.key === '+' || e.key === '=') {
     e.preventDefault()
     changeBoardZoom(.12)
@@ -382,7 +405,10 @@ function shortcuts(e) {
     else initialDeployment.value ? completeInitialDeployment() : enterContest()
   }
   if (e.key.toLowerCase() === 'e' && game.value?.phase === 'CONTEST') endTurn()
-  if (e.key === 'Escape') clearSelection()
+  if (e.key === 'Escape') {
+    deactivateBoardInteraction()
+    clearSelection()
+  }
 }
 
 function setupBattlefieldViewport() {
@@ -463,7 +489,31 @@ function changeBoardZoom(delta) {
   setBoardZoom(boardZoom.value + delta)
 }
 
+function activateBoardInteraction() {
+  if (boardInteractionActive.value) return
+  boardInteractionActive.value = true
+  nextTick(() => battlefieldViewport.value?.focus?.({ preventScroll: true }))
+}
+
+function deactivateBoardInteraction() {
+  if (!boardInteractionActive.value) return
+  boardInteractionActive.value = false
+  activeBoardPointers.clear()
+  boardDragStart = null
+  boardPinchStart = null
+  boardPanning.value = false
+  cancelBoardMomentum()
+}
+
+function handleBoardInteractionOutside(event) {
+  const viewport = battlefieldViewport.value
+  if (!viewport || viewport.contains(event.target) || event.target?.closest?.('.battlefield-view-controls')) return
+  deactivateBoardInteraction()
+}
+
 function zoomBattlefield(event) {
+  if (!boardInteractionActive.value) return
+  event.preventDefault()
   cancelBoardMomentum()
   const viewport = battlefieldViewport.value
   if (!viewport) return
@@ -561,8 +611,12 @@ function startBoardMomentum() {
 }
 
 function startBoardPan(event) {
-  cancelBoardMomentum()
   if (event.pointerType === 'mouse' && event.button !== 0) return
+  if (!boardInteractionActive.value) {
+    activateBoardInteraction()
+    return
+  }
+  cancelBoardMomentum()
   if (event.target?.closest?.('button')) return
   const point = pointerPosition(event)
   activeBoardPointers.set(event.pointerId, point)
@@ -660,14 +714,39 @@ function clearSelection() {
   selectedUnit.value = null
 }
 
+function handCardStyle(card, index, total) {
+  if (!total) return {}
+  const center = (total - 1) / 2
+  const offset = index - center
+  const normalized = center ? offset / center : 0
+  const distance = Math.abs(normalized)
+  // Keep the middle card upright and lift the outside cards into a clear arc.
+  const maxAngle = total >= 9 ? 25 : total >= 7 ? 29 : 23
+  const maxLift = total >= 9 ? 38 : total >= 7 ? 44 : 34
+  const overlap = total >= 10 ? -78 : total >= 8 ? -66 : total >= 6 ? -50 : total >= 4 ? -32 : -12
+  return {
+    '--fan-rotate': `${normalized * maxAngle}deg`,
+    '--fan-lift': `${-Math.pow(distance, 1.55) * maxLift}px`,
+    '--fan-rotate-mobile': `${normalized * maxAngle * 0.72}deg`,
+    '--fan-lift-mobile': `${-Math.pow(distance, 1.55) * maxLift * 0.72}px`,
+    '--fan-overlap': `${overlap}px`,
+    zIndex: selectedCard.value?.id === card.id ? 220 : 100 + index
+  }
+}
+
 function chooseCard(card) {
   if (!humanTurn.value || busy.value || drawReveal.value || phaseFx.value || combatFx.value || initiativeFx.value || (initialDeployment.value && bothInitialSitesReady.value)) return
   selectedUnit.value = null
+  if (forcedDiscarding.value) {
+    const toggledOff = selectedCard.value?.id === card.id
+    selectedCard.value = toggledOff ? null : card
+    tone('select')
+    return
+  }
   const toggledOff = selectedCard.value?.id === card.id
   selectedCard.value = toggledOff ? null : card
   tone('select')
   if (toggledOff) return
-  if (player.value.hand.length > 7) return notify('手牌超过上限，请先弃置一张手牌')
   if (card.cost > player.value.energy) return notify('灵力不足，但仍可弃置这张牌')
   if (game.value.phase !== 'DEPLOY' && card.type !== 'SPELL') return notify('争夺阶段只能使用瞬发术式')
   if (card.type === 'SPELL' && !['SEAL', 'SURGE', 'REINFORCE', 'RANGE', 'REFRESH'].includes(card.effectCode)) return play(card, {})
@@ -716,6 +795,7 @@ function isSourceSite(site) {
 }
 
 async function selectSite(site) {
+  if (forcedDiscarding.value) return
   if (!humanTurn.value || busy.value || drawReveal.value || phaseFx.value || combatFx.value || initiativeFx.value || (initialDeployment.value && bothInitialSitesReady.value)) return
   if (selectedCard.value && targetMode.value === 'site') {
     if (selectedCard.value.cost > player.value.energy) return notify('灵力不足，请改选或弃置这张牌')
@@ -737,6 +817,7 @@ async function selectSite(site) {
 }
 
 function selectUnit(unit) {
+  if (forcedDiscarding.value) return
   if (!humanTurn.value || busy.value || drawReveal.value || phaseFx.value || combatFx.value) return
   if (selectedCard.value && targetMode.value === 'unit') {
     if (selectedCard.value.cost > player.value.energy) return notify('灵力不足，请改选或弃置这张牌')
@@ -752,6 +833,7 @@ function selectUnit(unit) {
 }
 
 async function play(card, target) {
+  if (forcedDiscarding.value) return
   if (card.cost > player.value.energy) return notify('灵力不足')
   const targetSiteIndex = target.targetSiteIndex
   await act(() => api.playCard(game.value.id, { playerId: localPlayerId.value, cardId: card.id, ...target }), `发动「${card.name}」`)
@@ -793,9 +875,9 @@ async function resolveAttack(site) {
 
 async function completeInitialDeployment() {
   if (!humanTurn.value || !initialDeployment.value || game.value.phase !== 'DEPLOY' || busy.value) return
-  if (!playerReady.value) return notify('请先部署至少一张己方场地')
+  if (!playerReady.value) return notify('\u8bf7\u5148\u90e8\u7f72\u81f3\u5c11\u4e00\u5f20\u5df1\u65b9\u573a\u5730\u5361')
   clearSelection()
-  await act(() => api.endTurn(game.value.id, localPlayerId.value), '双方初始场地已就位')
+  await act(() => api.endTurn(game.value.id, localPlayerId.value), '\u53cc\u65b9\u521d\u59cb\u573a\u5730\u5df2\u5c31\u4f4d')
 }
 
 async function enterContest() {
@@ -818,8 +900,13 @@ async function enterContest() {
 
 async function endTurn() {
   if (!humanTurn.value || busy.value) return
+  await finishEndTurn()
+}
+
+async function finishEndTurn() {
+  if (!humanTurn.value || busy.value) return
   clearSelection()
-  await act(() => api.endTurn(game.value.id, localPlayerId.value), '回合交替')
+  await act(() => api.endTurn(game.value.id, localPlayerId.value), '\u56de\u5408\u4ea4\u66ff')
 }
 
 async function retreatUnit(unit) {
@@ -829,9 +916,15 @@ async function retreatUnit(unit) {
 }
 
 async function discard(card) {
-  if (!humanTurn.value || game.value.phase !== 'DEPLOY' || busy.value) return
-  await act(() => api.discard(game.value.id, localPlayerId.value, card.id), `弃置「${card.name}」`)
+  if (!humanTurn.value || busy.value) return
+  const allowed = game.value.phase === 'DEPLOY' || (game.value.phase === 'CONTEST' && forcedDiscarding.value)
+  if (!allowed) return
+  await act(() => api.discard(game.value.id, localPlayerId.value, card.id), `\u5f03\u7f6e\u300c${card.name}\u300d`)
   clearSelection()
+  if (forcedDiscarding.value && handOverflow.value === 0) {
+    forcedDiscarding.value = false
+    await finishEndTurn()
+  }
 }
 
 async function discardSelected() {
@@ -971,7 +1064,7 @@ async function processOpponentFxQueue() {
 }
 
 async function playOpponentActionFx(action, runId) {
-  aiFx.value = { detail: action.detail, kind: action.kind === 'target' ? 'attack' : action.kind }
+  aiFx.value = { title: action.title || '\u5bf9\u624b\u884c\u52a8', detail: action.detail, kind: action.kind === 'target' ? 'attack' : action.kind }
   tone(action.kind === 'target' ? 'warning' : action.kind === 'thinking' ? 'select' : 'place')
   await sleep(action.kind === 'target' ? 900 : 780)
   if (runId === opponentFxRunId) aiFx.value = null
@@ -979,7 +1072,7 @@ async function playOpponentActionFx(action, runId) {
 }
 
 async function playOpponentAttackFx(action, runId) {
-  aiFx.value = { detail: action.detail, kind: 'attack' }
+  aiFx.value = { title: action.title || '\u4e89\u593a\u573a\u5730', detail: action.detail, kind: 'attack' }
   tone('warning')
   await sleep(720)
   if (runId !== opponentFxRunId) return
@@ -1114,7 +1207,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
     <template v-else>
       <header class="battle-topbar">
         <button class="battle-brand" @click="requestExit('/')"><ArrowLeft :size="18"/><span class="brand-mark"><i></i><b></b></span><strong>场地弈境</strong></button>
-        <div class="round-meter"><span>第 {{ Math.min(game.round, 8) }} / 8 回合</span><div><i :style="{ width: `${Math.min(game.turnNumber / 16 * 100, 100)}%` }"></i></div><b :class="{ urgent: phaseClockUrgent }">{{ phaseLabel }} <em v-if="phaseClockLabel">{{ phaseClockLabel }}</em></b></div>
+        <div class="round-meter"><span>第 {{ Math.min(game.round, maxRounds) }} / {{ maxRounds }} 回合</span><div><i :style="{ width: `${roundProgress}%` }"></i></div><b :class="{ urgent: phaseClockUrgent }">{{ phaseLabel }} <em v-if="phaseClockLabel">{{ phaseClockLabel }}</em></b></div>
         <div class="battle-tools"><button @click="soundOn = !soundOn" :aria-label="soundOn ? '关闭声音与触感' : '开启声音与触感'"><Volume2 v-if="soundOn"/><VolumeX v-else/></button><button @click="showLog = !showLog"><History/><span>战局记录</span></button><button @click="requestExit('/rules')"><BookOpen/><span>规则</span></button><button aria-label="退出对局" @click="requestExit('/')"><LogOut/></button></div>
       </header>
 
@@ -1134,12 +1227,13 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         <div
           ref="battlefieldViewport"
           class="battlefield-viewport"
-          :class="{ 'is-panning': boardPanning, 'is-settling': boardSettling, 'is-gliding': boardGliding }"
+          :class="{ 'board-interaction-active': boardInteractionActive, 'is-panning': boardPanning, 'is-settling': boardSettling, 'is-gliding': boardGliding }"
           :style="boardFeedbackStyle"
           role="region"
           tabindex="0"
-          aria-label="九域战场视野。手机可上下左右拖动，滚轮或双指可缩放，按 0 重置视野。"
-          @wheel.prevent="zoomBattlefield"
+          :aria-label="boardInteractionActive ? '\u6218\u573a\u5df2\u805a\u7126\uff0c\u53ef\u62d6\u52a8\u6216\u7f29\u653e\u573a\u5730' : '\u6218\u573a\u672a\u805a\u7126\uff0c\u6ed1\u52a8\u5c06\u6eda\u52a8\u9875\u9762\uff1b\u70b9\u51fb\u540e\u53ef\u79fb\u52a8\u573a\u5730'"
+          @focus="activateBoardInteraction"
+          @wheel="zoomBattlefield"
           @pointerdown="startBoardPan"
           @pointermove="moveBoardPan"
           @pointerup="endBoardPan"
@@ -1178,7 +1272,7 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
           </div>
         </div>
         <div class="battlefield-view-controls" aria-label="战场视野控制">
-          <span class="view-control-hint"><Move :size="13"/>上下左右拖拽</span>
+          <span class="view-control-hint"><Move :size="13"/>{{ boardInteractionActive ? '\u573a\u5730\u5df2\u805a\u7126\uff1a\u62d6\u52a8 / \u6eda\u8f6e\u7f29\u653e' : '\u70b9\u51fb\u573a\u5730\u540e\u624d\u53ef\u79fb\u52a8' }}</span>
           <button type="button" title="缩小视野（-）" aria-label="缩小战场视野" @click="changeBoardZoom(-.12)"><Minus/></button>
           <output aria-live="polite">{{ boardZoomLabel }}</output>
           <button type="button" title="放大视野（+）" aria-label="放大战场视野" @click="changeBoardZoom(.12)"><Plus/></button>
@@ -1187,27 +1281,38 @@ const controlled = id => game.value?.sites.filter(site => site.ownerId === id).l
         <div class="battle-flow-hint"><span class="hint-dot"></span><span v-if="game.phase === 'DEPLOY'">{{ initialDeployment ? '先部署己方场地，再完成部署等待对手场地显现' : '从下方手牌开始：选卡后，点击场地放下它' }}</span><span v-else>金色高亮为射程内目标；中央天元与八个外域均相邻</span></div>
         <transition name="impact"><div v-if="pulse" class="impact-banner"><Sparkles/>{{ pulse }}</div></transition>
         <transition name="fade"><div v-if="error" class="battle-toast"><X :size="16"/>{{ error }}</div></transition>
-        <transition name="impact"><div v-if="aiFx" class="ai-action-banner" :class="`ai-${aiFx.kind}`"><span class="ai-action-icon"><Swords v-if="aiFx.kind === 'attack'"/><Sparkles v-else/></span><div><small>OPPONENT ACTION</small><b>{{ rival?.name || '对手' }}正在行动</b><p>{{ aiFx.detail }}</p></div></div></transition>
+        <transition name="impact"><div v-if="aiFx" class="ai-action-banner" :class="`ai-${aiFx.kind}`"><span class="ai-action-icon"><Swords v-if="aiFx.kind === 'attack'"/><Sparkles v-else/></span><div><small>OPPONENT ACTION</small><b>{{ rival?.name || '\u5bf9\u624b' }} &#183; {{ aiFx.title || '\u5bf9\u624b\u884c\u52a8' }}</b><p>{{ aiFx.detail }}</p></div></div></transition>
         <div v-if="placementFx" class="placement-flight" :class="`to-site-${placementFx.targetSiteIndex}`" :style="{ '--flight-color': placementFx.card ? '#63d2a5' : '#efc36f' }"><span class="flight-trail"></span><GameCard v-if="placementFx.card" class="flight-card" :card="placementFx.card" compact disabled/><span class="flight-label">{{ placementFx.card.name }}</span><Zap :size="18"/></div>
       </main>
 
       <section class="player-strip self-strip">
         <div class="combatant"><span class="combatant-avatar">{{ player.avatar }}</span><div><small>{{ player.title }}</small><b>{{ player.name }}</b></div></div>
         <div class="turn-guidance"><span :class="{ active: humanTurn }">{{ humanTurn ? '你的回合' : '等待对手' }}</span><p>{{ instruction }}</p><div class="action-guide"><span v-for="(step, index) in actionSteps" :key="step.label" :class="{ done: step.done, current: index === (selectedCard || selectedUnit ? 1 : 0) }"><i>{{ step.done ? '✓' : index + 1 }}</i>{{ step.label }}</span></div></div>
-        <div class="resource-cluster"><span class="energy-pips" title="本回合灵力"><i v-for="n in 3" :key="n" :class="{ filled: n <= player.energy }">✦</i></span><span class="control-count">控制 <b>{{ controlled(localPlayerId) }}</b>/{{ game.sites.length }}</span><span class="score-orb"><small>积分</small><b>{{ player.score }}</b></span></div>
+        <div class="resource-cluster"><span class="energy-pips" title="本回合灵力"><i v-for="n in (game.boardSize || 3)" :key="n" :class="{ filled: n <= player.energy }">✦</i></span><span class="control-count">控制 <b>{{ controlled(localPlayerId) }}</b>/{{ game.sites.length }}</span><span class="score-orb"><small>积分</small><b>{{ player.score }}</b></span></div>
       </section>
 
       <section class="hand-area">
-        <div v-if="player.hand.length > 7" class="discard-warning">手牌超过上限，请选中一张牌后点击「弃置选中牌」</div>
-        <div class="hand-caption"><span>你的手牌</span><b>{{ hand.length }} / 7</b><small>点击卡牌查看可用目标</small></div>
+        <div v-if="forcedDiscarding" class="discard-warning forced-discard-warning">&#x56de;&#x5408;&#x7ed3;&#x7b97;&#x4e2d;&#xff1a;&#x8fd8;&#x9700;&#x5f03;&#x7f6e; {{ handOverflow }} &#x5f20;&#x624b;&#x724c;</div>
+        <div v-else-if="handOverflow" class="hand-limit-note">&#x672c;&#x56de;&#x5408;&#x53ef;&#x7ee7;&#x7eed;&#x884c;&#x52a8;&#xff0c;&#x7ed3;&#x675f;&#x56de;&#x5408;&#x65f6;&#x9700;&#x5f03;&#x724c;</div>
+        <div class="hand-caption"><span>&#x4f60;&#x7684;&#x624b;&#x724c;</span><b>{{ hand.length }} / 7</b><small>&#x684c;&#x9762;&#x7aef;&#x53f3;&#x952e;&#xff0c;&#x79fb;&#x52a8;&#x7aef;&#x53cc;&#x51fb;&#x67e5;&#x770b;&#x8be6;&#x60c5;</small></div>
         <TransitionGroup name="hand-card" tag="div" class="hand-cards">
-          <GameCard v-for="(card, i) in hand" :key="`${card.id}-${i}`" :card="card" compact :selected="selectedCard?.id === card.id" :class="{ unaffordable: card.cost > player.energy }" :disabled="!humanTurn" @select="chooseCard"/>
+          <GameCard
+            v-for="(card, i) in hand"
+            :key="`${card.id}-${i}`"
+            :card="card"
+            compact
+            :selected="selectedCard?.id === card.id"
+            :class="{ unaffordable: card.cost > player.energy }"
+            :style="handCardStyle(card, i, hand.length)"
+            :disabled="!humanTurn"
+            @select="chooseCard"
+          />
         </TransitionGroup>
         <div class="turn-actions">
-          <button v-if="selectedCard && humanTurn && game.phase === 'DEPLOY'" class="discard-selected" :disabled="busy" @click.stop="discardSelected"><Trash2/><span>弃置选中牌</span></button>
-          <button v-if="game.phase === 'DEPLOY' && initialDeployment" class="phase-button ready-deployment" :disabled="!humanTurn || busy || player.hand.length > 7 || !playerReady" @click="completeInitialDeployment"><CheckCircle2/><span>完成部署</span><small>C</small></button>
-          <button v-else-if="game.phase === 'DEPLOY'" class="phase-button" :disabled="!humanTurn || busy || player.hand.length > 7" @click="enterContest"><Swords/><span>进入争夺</span><small>C</small></button>
-          <button v-else-if="game.phase === 'CONTEST'" class="phase-button end" :disabled="!humanTurn || busy" @click="endTurn"><ChevronRight/><span>结束回合</span><small>E</small></button>
+          <button v-if="selectedCard && humanTurn && (game.phase === 'DEPLOY' || forcedDiscarding)" class="discard-selected" :disabled="busy" @click.stop="discardSelected"><Trash2/><span>&#x5f03;&#x7f6e;&#x9009;&#x4e2d;&#x724c;</span></button>
+          <button v-if="game.phase === 'DEPLOY' && initialDeployment" class="phase-button ready-deployment" :disabled="!humanTurn || busy || forcedDiscarding || !playerReady" @click="completeInitialDeployment"><CheckCircle2/><span>完成部署</span><small>C</small></button>
+          <button v-else-if="game.phase === 'DEPLOY'" class="phase-button" :disabled="!humanTurn || busy" @click="enterContest"><Swords/><span>进入争夺</span><small>C</small></button>
+          <button v-else-if="game.phase === 'CONTEST'" class="phase-button end" :disabled="!humanTurn || busy || forcedDiscarding" @click="endTurn"><ChevronRight/><span>&#x7ed3;&#x675f;&#x56de;&#x5408;</span><small>E</small></button>
         </div>
       </section>
 
